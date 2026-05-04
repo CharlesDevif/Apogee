@@ -5,7 +5,7 @@ CC      ?= gcc
 CFLAGS  := -std=c11 -Wall -Wextra -Werror -Wpedantic -O2 \
            -D_POSIX_C_SOURCE=200809L \
            -Iinclude -Isrc
-LDFLAGS :=
+LDFLAGS := -lm
 
 SRC_DIR  := src
 BUILD_DIR := build

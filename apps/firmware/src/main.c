@@ -1,12 +1,15 @@
-/* Apogée firmware — Phase 2.2
+/* Apogée firmware — Phase 2.3
  *
- * Emits binary TelemetryPacket (40 bytes, magic 0xAB1E, CRC-16-CCITT) at 10 Hz.
- * State machine, physics model, and command handling come in 2.3+.
+ * State machine: BOOT (auto 2s) -> SAFE -> NOMINAL -> COMMS / FAULT.
+ * Telemetry emitted at 10 Hz reflects the current mode.
  */
 
 #include "net.h"
+#include "physics.h"
+#include "state_machine.h"
 #include "telemetry.h"
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,13 +19,7 @@
 #define BACKEND_HOST   "127.0.0.1"
 #define BACKEND_PORT   5001
 #define TICK_PERIOD_MS 100   /* 10 Hz */
-
-/* Provisional fixed location until the orbit model lands in 2.4.
- * Picked Bessan (Hérault) so it matches the operator station for now. */
-#define INIT_LAT_E7    433430000   /* 43.343°N */
-#define INIT_LON_E7     34200000   /*  3.420°E */
-#define INIT_ALT_M     400000      /* 400 km LEO */
-#define INIT_BATT_MV     7400      /* 7.4 V nominal Li-ion */
+#define DT_SEC         (TICK_PERIOD_MS / 1000.0)
 
 static volatile sig_atomic_t g_running = 1;
 
@@ -52,25 +49,44 @@ int main(void) {
     signal(SIGINT,  on_sigint);
     signal(SIGTERM, on_sigint);
 
+    StateMachine    sm;
+    PhysicsState    phys;
     TelemetryPacket pkt;
-    uint32_t tick = 0;
+    sm_init(&sm);
+    physics_init(&phys);
 
-    fprintf(stderr, "[NOMINAL] entering main loop\n");
+    /* Demo timeline: hold SAFE for 3s after BOOT, then auto-promote to NOMINAL.
+     * Once command channel is wired (2.6) the operator drives mode changes. */
+    bool nominal_kicked = false;
+
+    fprintf(stderr, "[BOOT] entering main loop @ 10 Hz\n");
     while (g_running) {
+        sm_tick(&sm);
+
+        if (!nominal_kicked &&
+            sm.mode == APOGEE_MODE_SAFE &&
+            sm.tick_in_mode >= 30) {
+            sm_request_mode(&sm, APOGEE_MODE_NOMINAL);
+            nominal_kicked = true;
+        }
+
+        physics_tick(&phys, sm.mode, DT_SEC);
+
         telemetry_compose(&pkt,
-                          APOGEE_MODE_NOMINAL,
-                          tick,
-                          INIT_LAT_E7,
-                          INIT_LON_E7,
-                          INIT_ALT_M,
-                          INIT_BATT_MV,
-                          0, 0, 0);
+                          sm.mode,
+                          sm.total_ticks,
+                          phys.lat_e7,
+                          phys.lon_e7,
+                          phys.alt_m,
+                          phys.battery_mv,
+                          phys.roll10, phys.pitch10, phys.yaw10);
         (void)net_send(&pkt, sizeof pkt);
-        tick++;
+
         sleep_ms(TICK_PERIOD_MS);
     }
 
-    fprintf(stderr, "[SAFE] shutdown signal received (sent %u packets)\n", tick);
+    fprintf(stderr, "[SHUTDOWN] mode=%s ticks=%u\n",
+            sm_mode_name(sm.mode), sm.total_ticks);
     net_close();
     return EXIT_SUCCESS;
 }

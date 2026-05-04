@@ -122,12 +122,22 @@ fwSocket.on("message", (data, rinfo) => {
     return;
   }
   fwPacketCount += 1;
-  if (fwPacketCount === 1 || fwPacketCount % 50 === 0) {
+  if (fwPacketCount === 1 || fwPacketCount % 100 === 0) {
     const s = result.sample;
     console.log(
       `[fw] #${fwPacketCount} tick=${result.tick} mode=${s.mode} ` +
         `pos=${s.lat.toFixed(3)},${s.lon.toFixed(3)} alt=${s.alt_m}m batt=${s.battery_v}V`,
     );
+  }
+
+  // Push the decoded sample to all WS clients. Throttle to ~5 Hz so
+  // the browser isn't drowned at firmware-rate (10 Hz).
+  if (fwPacketCount % 2 === 0) {
+    const msg: WSServerMessage = { type: "telemetry", payload: result.sample };
+    const json = JSON.stringify(msg);
+    for (const c of wss.clients) {
+      if (c.readyState === WebSocket.OPEN) c.send(json);
+    }
   }
 });
 

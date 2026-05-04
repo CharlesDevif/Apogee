@@ -37,11 +37,23 @@ function parse3LE(text: string, group: string): TleEntry[] {
 async function fetchGroup(group: Group): Promise<TleEntry[]> {
   const url = `https://celestrak.org/NORAD/elements/gp.php?GROUP=${group}&FORMAT=tle`;
   const r = await fetch(url, {
-    headers: { "User-Agent": "Apogee-MissionControl/0.0.1 (educational)" },
+    headers: {
+      "User-Agent":
+        "Apogee/0.1 (+https://github.com/charles/apogee; educational mission-control)",
+    },
   });
   if (!r.ok) throw new Error(`Celestrak ${group} fetch failed: ${r.status}`);
   const text = await r.text();
   return parse3LE(text, group);
+}
+
+async function fetchGroupSafe(group: Group): Promise<TleEntry[]> {
+  try {
+    return await fetchGroup(group);
+  } catch (err) {
+    console.warn(`[tle] ${group} fetch failed: ${(err as Error).message}`);
+    return [];
+  }
 }
 
 function sampleN<T>(arr: T[], n: number): T[] {
@@ -57,7 +69,11 @@ function sampleN<T>(arr: T[], n: number): T[] {
 export async function refreshCache(): Promise<TleBundle> {
   if (inflight) return inflight;
   inflight = (async () => {
-    const groups = await Promise.all(GROUPS.map(fetchGroup));
+    const groups = await Promise.all(GROUPS.map(fetchGroupSafe));
+    const totalFetched = groups.reduce((s, g) => s + g.length, 0);
+    if (totalFetched === 0) {
+      throw new Error("All Celestrak groups failed (rate-limited?)");
+    }
     const byId = new Map<number, TleEntry>();
     for (const list of groups) {
       for (const e of list) {

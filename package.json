@@ -7,6 +7,8 @@
     "dev": "pnpm --parallel --filter \"@apogee/*\" dev",
     "dev:web": "pnpm --filter @apogee/web dev",
     "dev:server": "pnpm --filter @apogee/server dev",
+    "dev:fw": "make -C apps/firmware run",
+    "dev:all": "pnpm --parallel run /^dev:(web|server|fw)$/",
     "build": "pnpm -r --filter \"@apogee/*\" build",
     "lint": "pnpm -r --filter \"@apogee/*\" lint",
     "typecheck": "pnpm -r --filter \"@apogee/*\" typecheck"

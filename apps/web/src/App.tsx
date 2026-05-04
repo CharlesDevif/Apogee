@@ -22,6 +22,7 @@ import { useFreeFly } from "./hooks/useFreeFly";
 import { useUtcClock } from "./hooks/useUtcClock";
 import { SatelliteLayer } from "./features/satellites/SatelliteLayer";
 import { OrbitLayer } from "./features/satellites/OrbitLayer";
+import { CubeSatLayer } from "./features/cubesat/CubeSatLayer";
 import { TrackBar } from "./features/track/TrackBar";
 
 const ionToken = import.meta.env.VITE_CESIUM_ION_TOKEN as string | undefined;
@@ -59,6 +60,7 @@ export default function App() {
   const tle = useMissionStore((s) => s.tle);
   const positions = useMissionStore((s) => s.positions);
   const selectedId = useMissionStore((s) => s.selectedNoradId);
+  const cubesat = useMissionStore((s) => s.cubesat);
   const events = useMissionStore((s) => s.events);
 
   useEffect(() => {
@@ -162,6 +164,7 @@ export default function App() {
 
       <SatelliteLayer viewer={viewerInstance} />
       <OrbitLayer viewer={viewerInstance} />
+      <CubeSatLayer viewer={viewerInstance} />
       <TrackBar viewer={viewerInstance} />
       <Crosshair />
       <CornerFrame />
@@ -276,7 +279,13 @@ export default function App() {
       <aside className="pointer-events-auto absolute right-6 top-28 z-[60] w-[260px] flex flex-col gap-2">
         <Strip>
           <span className="text-phosphor">[</span>
-          <span>{selectedId ? "TRACKING TARGET" : "BEACON · 0xAB1E"}</span>
+          <span>
+            {selectedId
+              ? "TRACKING TARGET"
+              : cubesat
+                ? "APOGÉE-1 · LIVE"
+                : "BEACON · 0xAB1E"}
+          </span>
           <span className="text-phosphor flex-1 text-right">]</span>
         </Strip>
 
@@ -310,6 +319,38 @@ export default function App() {
                   unit="km"
                 />
               </>
+            ) : cubesat ? (
+              <>
+                <Readout k="Mode" v={cubesat.mode} />
+                <Readout
+                  k="Battery"
+                  v={cubesat.battery_v.toFixed(2)}
+                  unit="V"
+                  warn={cubesat.battery_v < 7.0}
+                />
+                <Readout
+                  k="Roll"
+                  v={cubesat.attitude_deg.roll.toFixed(1)}
+                  unit="°"
+                />
+                <Readout
+                  k="Pitch"
+                  v={cubesat.attitude_deg.pitch.toFixed(1)}
+                  unit="°"
+                />
+                <Readout
+                  k="Yaw"
+                  v={cubesat.attitude_deg.yaw.toFixed(1)}
+                  unit="°"
+                />
+                <Readout k="Lat" v={cubesat.lat.toFixed(3)} unit="°" />
+                <Readout k="Lon" v={cubesat.lon.toFixed(3)} unit="°" />
+                <Readout
+                  k="Alt"
+                  v={(cubesat.alt_m / 1000).toFixed(1)}
+                  unit="km"
+                />
+              </>
             ) : (
               <>
                 <Readout k="Tick" v="—" />
@@ -324,7 +365,9 @@ export default function App() {
           <div className="mt-3 text-[8px] tracking-[0.3em] text-dim uppercase">
             {selectedEntry
               ? "live sgp4 · 1 hz"
-              : "click a satellite to track · or await firmware"}
+              : cubesat
+                ? "live firmware · ~5 hz"
+                : "click a satellite or boot the firmware"}
           </div>
         </Bracket>
 

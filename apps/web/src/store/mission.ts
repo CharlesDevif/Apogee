@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { TleEntry, TleBundle } from "@apogee/shared-types";
+import type { TelemetrySample, TleEntry, TleBundle } from "@apogee/shared-types";
 import type { OrbitPoint, SatPosition } from "../workers/sgp4.worker";
 
 export type LinkState =
@@ -14,6 +14,8 @@ type MissionState = {
   positions: Map<number, SatPosition>;
   selectedNoradId: number | null;
   selectedOrbit: { noradId: number; points: OrbitPoint[] } | null;
+  cubesat: TelemetrySample | null;
+  cubesatLastAt: number | null;
   events: Array<{ ts: number; level: "info" | "ok" | "warn" | "alert"; text: string }>;
 
   setLink: (s: LinkState) => void;
@@ -21,6 +23,7 @@ type MissionState = {
   setPositions: (p: SatPosition[]) => void;
   selectSat: (id: number | null) => void;
   setOrbit: (orbit: { noradId: number; points: OrbitPoint[] } | null) => void;
+  setCubesat: (sample: TelemetrySample) => void;
   pushEvent: (level: "info" | "ok" | "warn" | "alert", text: string) => void;
 };
 
@@ -30,6 +33,8 @@ export const useMissionStore = create<MissionState>((set) => ({
   positions: new Map(),
   selectedNoradId: null,
   selectedOrbit: null,
+  cubesat: null,
+  cubesatLastAt: null,
   events: [
     { ts: Date.now(), level: "ok", text: "boot complete" },
     { ts: Date.now(), level: "info", text: "awaiting tle source" },
@@ -44,6 +49,7 @@ export const useMissionStore = create<MissionState>((set) => ({
   },
   selectSat: (id) => set({ selectedNoradId: id, selectedOrbit: null }),
   setOrbit: (orbit) => set({ selectedOrbit: orbit }),
+  setCubesat: (sample) => set({ cubesat: sample, cubesatLastAt: Date.now() }),
   pushEvent: (level, text) =>
     set((s) => ({
       events: [...s.events, { ts: Date.now(), level, text }].slice(-50),

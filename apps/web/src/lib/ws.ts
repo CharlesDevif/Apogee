@@ -35,6 +35,13 @@ export function connect() {
       const s = useMissionStore.getState();
       s.setTle(msg.payload);
       s.pushEvent("ok", `tle bundle · ${msg.payload.entries.length} entries`);
+    } else if (msg.type === "telemetry") {
+      const s = useMissionStore.getState();
+      const wasNull = s.cubesat === null;
+      s.setCubesat(msg.payload);
+      if (wasNull) {
+        s.pushEvent("ok", `cubesat link · ${msg.payload.mode}`);
+      }
     }
   };
 
