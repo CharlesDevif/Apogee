@@ -1,21 +1,38 @@
 import express from "express";
 import { createServer } from "node:http";
+import { createSocket } from "node:dgram";
 import { WebSocketServer, WebSocket } from "ws";
 import type { WSServerMessage } from "@apogee/shared-types";
 import { getCachedBundle, getCacheAgeMs, refreshCache } from "./celestrak.js";
+import { decodeTelemetry } from "./telemetry.js";
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3001;
+const FW_LISTEN_PORT = Number(process.env.FW_LISTEN_PORT) || 5001;
 const startedAt = Date.now();
+
+let lastFwPacketAt: number | null = null;
+let fwPacketCount = 0;
+let fwBadPackets = 0;
 
 app.use(express.json());
 
 app.get("/api/health", (_req, res) => {
+  const fwAge = lastFwPacketAt ? Date.now() - lastFwPacketAt : null;
+  const fwState =
+    fwAge === null
+      ? "disconnected"
+      : fwAge < 3000
+        ? "connected"
+        : "stale";
   res.json({
     status: "ok",
     uptime_s: Math.floor((Date.now() - startedAt) / 1000),
     last_tle_refresh: getCacheAgeMs(),
-    firmware: "disconnected",
+    firmware: fwState,
+    fw_packets: fwPacketCount,
+    fw_bad_packets: fwBadPackets,
+    fw_last_age_ms: fwAge,
   });
 });
 
@@ -88,6 +105,39 @@ setInterval(
   },
   6 * 60 * 60 * 1000,
 );
+
+// Firmware UDP listener — receives binary telemetry from the simulated CubeSat.
+const fwSocket = createSocket("udp4");
+
+fwSocket.on("message", (data, rinfo) => {
+  lastFwPacketAt = Date.now();
+  const result = decodeTelemetry(data);
+  if (!result.ok) {
+    fwBadPackets += 1;
+    if (fwBadPackets <= 5 || fwBadPackets % 100 === 0) {
+      console.warn(
+        `[fw] bad packet (${result.error}) from ${rinfo.address}:${rinfo.port} · ${data.length}B`,
+      );
+    }
+    return;
+  }
+  fwPacketCount += 1;
+  if (fwPacketCount === 1 || fwPacketCount % 50 === 0) {
+    const s = result.sample;
+    console.log(
+      `[fw] #${fwPacketCount} tick=${result.tick} mode=${s.mode} ` +
+        `pos=${s.lat.toFixed(3)},${s.lon.toFixed(3)} alt=${s.alt_m}m batt=${s.battery_v}V`,
+    );
+  }
+});
+
+fwSocket.on("error", (err) => {
+  console.error("[fw] udp socket error:", err.message);
+});
+
+fwSocket.bind(FW_LISTEN_PORT, "127.0.0.1", () => {
+  console.log(`[fw] listening udp://127.0.0.1:${FW_LISTEN_PORT}`);
+});
 
 httpServer.listen(PORT, () => {
   console.log(`[apogee-server] http://localhost:${PORT}`);
