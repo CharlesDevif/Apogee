@@ -1,0 +1,18 @@
+{
+  "name": "apogee",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Mini mission control for CubeSats — open-source ground segment with simulated firmware and security demo bench",
+  "scripts": {
+    "dev": "pnpm --parallel --filter \"@apogee/*\" dev",
+    "dev:web": "pnpm --filter @apogee/web dev",
+    "dev:server": "pnpm --filter @apogee/server dev",
+    "build": "pnpm -r --filter \"@apogee/*\" build",
+    "lint": "pnpm -r --filter \"@apogee/*\" lint",
+    "typecheck": "pnpm -r --filter \"@apogee/*\" typecheck"
+  },
+  "packageManager": "pnpm@9.0.0",
+  "engines": {
+    "node": ">=20"
+  }
+}

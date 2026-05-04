@@ -1,0 +1,22 @@
+node_modules
+dist
+build
+*.log
+.DS_Store
+.env
+.env.local
+.vite
+coverage
+*.tsbuildinfo
+
+# Internal tooling — not part of the public project
+_bmad/
+_bmad-output/
+.claude/skills/bmad-*/
+.claude/skills/cis-*/
+.claude/agents/
+
+# firmware artifacts
+apps/firmware/build
+apps/firmware/*.o
+apps/firmware/apogee_fw
