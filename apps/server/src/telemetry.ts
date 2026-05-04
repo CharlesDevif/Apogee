@@ -1,68 +1,81 @@
-// Decoder for the firmware's binary TelemetryPacket.
-// Layout must match `apps/firmware/src/telemetry.h`. Keep the offsets in sync.
+// Decode CCSDS Space Packet (PUS Service 3 / Subtype 25 — Housekeeping report)
+// emitted by the Apogée firmware. Layout matches apps/firmware/src/telemetry.{h,c}.
 
 import type { TelemetrySample } from "@apogee/shared-types";
+import {
+  APID,
+  CCSDS_PRIMARY_HEADER_SIZE,
+  CCSDS_PUS_TM_SEC_HDR_SIZE,
+  CCSDS_TYPE_TM,
+  PUS,
+  parsePrimaryHeader,
+  parsePusTmSecondary,
+  verifyCrc,
+} from "./ccsds.js";
 
-export const TELEMETRY_PACKET_SIZE = 40;
-export const TELEMETRY_MAGIC = 0xab1e;
-export const TELEMETRY_VERSION = 0x01;
+export const HK_PAYLOAD_SIZE = 25;
+export const HK_PACKET_SIZE =
+  CCSDS_PRIMARY_HEADER_SIZE + CCSDS_PUS_TM_SEC_HDR_SIZE + HK_PAYLOAD_SIZE + 2;
 
 const MODE_NAMES = ["SAFE", "NOMINAL", "COMMS", "FAULT", "BOOT"] as const;
 
-function crc16Ccitt(buf: Buffer | Uint8Array): number {
-  let crc = 0xffff;
-  for (let i = 0; i < buf.length; i++) {
-    crc ^= buf[i] << 8;
-    for (let b = 0; b < 8; b++) {
-      crc = (crc & 0x8000) !== 0 ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
-    }
-  }
-  return crc & 0xffff;
-}
-
 export type DecodeError =
   | "wrong_size"
-  | "bad_magic"
-  | "bad_version"
+  | "bad_primary_header"
+  | "wrong_type"
+  | "wrong_apid"
+  | "missing_secondary"
+  | "bad_pus_secondary"
+  | "wrong_service"
   | "bad_crc"
   | "bad_mode";
 
 export type DecodeResult =
-  | { ok: true; sample: TelemetrySample; tick: number }
+  | { ok: true; sample: TelemetrySample; tick: number; seqCount: number }
   | { ok: false; error: DecodeError };
 
 export function decodeTelemetry(data: Buffer): DecodeResult {
-  if (data.length !== TELEMETRY_PACKET_SIZE) return { ok: false, error: "wrong_size" };
+  if (data.length !== HK_PACKET_SIZE) return { ok: false, error: "wrong_size" };
 
-  const magic = data.readUInt16LE(0);
-  if (magic !== TELEMETRY_MAGIC) return { ok: false, error: "bad_magic" };
+  const ph = parsePrimaryHeader(data);
+  if (!ph) return { ok: false, error: "bad_primary_header" };
+  if (ph.type !== CCSDS_TYPE_TM) return { ok: false, error: "wrong_type" };
+  if (ph.apid !== APID.HK) return { ok: false, error: "wrong_apid" };
+  if (!ph.secHdrFlag) return { ok: false, error: "missing_secondary" };
 
-  const version = data.readUInt8(2);
-  if (version !== TELEMETRY_VERSION) return { ok: false, error: "bad_version" };
+  if (!verifyCrc(data)) return { ok: false, error: "bad_crc" };
 
-  const crcRecv = data.readUInt16LE(38);
-  const crcCalc = crc16Ccitt(data.subarray(0, 38));
-  if (crcRecv !== crcCalc) return { ok: false, error: "bad_crc" };
+  const secHdrStart = CCSDS_PRIMARY_HEADER_SIZE;
+  const sec = parsePusTmSecondary(
+    data.subarray(secHdrStart, secHdrStart + CCSDS_PUS_TM_SEC_HDR_SIZE),
+  );
+  if (!sec) return { ok: false, error: "bad_pus_secondary" };
+  if (sec.service !== PUS.HOUSEKEEPING || sec.subtype !== PUS.HK_REPORT) {
+    return { ok: false, error: "wrong_service" };
+  }
 
-  const modeRaw = data.readUInt8(3);
+  const payloadStart = secHdrStart + CCSDS_PUS_TM_SEC_HDR_SIZE;
+  const p = data.subarray(payloadStart, payloadStart + HK_PAYLOAD_SIZE);
+
+  const modeRaw = p.readUInt8(0);
   const mode = MODE_NAMES[modeRaw];
   if (!mode) return { ok: false, error: "bad_mode" };
 
-  const tick = data.readUInt32LE(4);
-  const tsUs = data.readBigUInt64LE(8);
-  const latE7 = data.readInt32LE(16);
-  const lonE7 = data.readInt32LE(20);
-  const altM = data.readUInt32LE(24);
-  const battMv = data.readUInt16LE(28);
-  const roll10 = data.readInt16LE(30);
-  const pitch10 = data.readInt16LE(32);
-  const yaw10 = data.readInt16LE(34);
+  const battMv = p.readUInt16BE(1);
+  const latE7 = p.readInt32BE(3);
+  const lonE7 = p.readInt32BE(7);
+  const altM = p.readUInt32BE(11);
+  const roll10 = p.readInt16BE(15);
+  const pitch10 = p.readInt16BE(17);
+  const yaw10 = p.readInt16BE(19);
+  const tick = p.readUInt32BE(21);
 
   return {
     ok: true,
     tick,
+    seqCount: ph.seqCount,
     sample: {
-      ts: Number(tsUs / 1000n),
+      ts: sec.cucSeconds * 1000,
       mode,
       lat: latE7 / 1e7,
       lon: lonE7 / 1e7,

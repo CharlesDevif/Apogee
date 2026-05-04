@@ -8,7 +8,7 @@
     "dev:web": "pnpm --filter @apogee/web dev",
     "dev:server": "pnpm --filter @apogee/server dev",
     "dev:fw": "make -C apps/firmware run",
-    "dev:all": "pnpm --parallel run /^dev:(web|server|fw)$/",
+    "dev:all": "concurrently -n web,server,fw -c yellow,green,magenta \"pnpm dev:web\" \"pnpm dev:server\" \"pnpm dev:fw\"",
     "build": "pnpm -r --filter \"@apogee/*\" build",
     "lint": "pnpm -r --filter \"@apogee/*\" lint",
     "typecheck": "pnpm -r --filter \"@apogee/*\" typecheck"
@@ -16,5 +16,8 @@
   "packageManager": "pnpm@9.0.0",
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
   }
 }

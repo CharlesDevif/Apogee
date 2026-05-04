@@ -1,11 +1,13 @@
 #ifndef APOGEE_TELEMETRY_H
 #define APOGEE_TELEMETRY_H
 
+#include "ccsds.h"
+
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
-#define APOGEE_TM_MAGIC   0xAB1Eu
-#define APOGEE_TM_VERSION 0x01u
-
+/* Apogée operational modes. Wire value matches the byte we put in HK reports. */
 typedef enum {
     APOGEE_MODE_SAFE    = 0,
     APOGEE_MODE_NOMINAL = 1,
@@ -14,36 +16,50 @@ typedef enum {
     APOGEE_MODE_BOOT    = 4,
 } ApogeeMode;
 
-/* On-the-wire layout — little-endian, 40 bytes total.
- * The CRC field covers all bytes preceding it. */
-typedef struct __attribute__((packed)) {
-    uint16_t magic;          /* 0xAB1E                      offset  0  size 2 */
-    uint8_t  version;        /* 0x01                                3       1 */
-    uint8_t  mode;           /* ApogeeMode                          4       1 */
-    uint32_t tick_count;     /* ticks since boot                    8       4 */
-    uint64_t timestamp_us;   /* unix microseconds                  16       8 */
-    int32_t  lat_e7;         /* latitude  * 1e7                    20       4 */
-    int32_t  lon_e7;         /* longitude * 1e7                    24       4 */
-    uint32_t alt_m;          /* altitude in meters                 28       4 */
-    uint16_t battery_mv;     /* battery voltage in mV              30       2 */
-    int16_t  attitude_deg[3];/* roll, pitch, yaw  *10°             36       6 */
-    uint8_t  reserved[2];    /*                                    38       2 */
-    uint16_t crc16;          /* CRC over offsets 0..37             40       2 */
-} TelemetryPacket;
+/* Housekeeping payload (Service 3 / Subtype 25), big-endian, 25 bytes:
+ *   offset  size  field
+ *        0    1   mode
+ *        1    2   battery_mv
+ *        3    4   lat_e7  (int32)
+ *        7    4   lon_e7  (int32)
+ *       11    4   alt_m   (uint32)
+ *       15    2   roll10  (int16, deg * 10)
+ *       17    2   pitch10 (int16)
+ *       19    2   yaw10   (int16)
+ *       21    4   tick_count (uint32, since boot)
+ */
+#define APOGEE_HK_PAYLOAD_SIZE 25u
 
-_Static_assert(sizeof(TelemetryPacket) == 40,
-               "TelemetryPacket must be exactly 40 bytes");
+/* Full HK packet: primary header (6) + PUS TM secondary (7) + payload (25)
+ * + CRC trailer (2) = 40 bytes. */
+#define APOGEE_HK_PACKET_SIZE \
+    (CCSDS_PRIMARY_HEADER_SIZE + CCSDS_PUS_TM_SEC_HDR_SIZE + \
+     APOGEE_HK_PAYLOAD_SIZE + CCSDS_CRC_SIZE)
 
-/* Compose a fully-populated telemetry packet, including timestamp + CRC. */
-void telemetry_compose(TelemetryPacket *out,
-                       ApogeeMode mode,
-                       uint32_t tick_count,
-                       int32_t lat_e7,
-                       int32_t lon_e7,
-                       uint32_t alt_m,
-                       uint16_t battery_mv,
-                       int16_t roll10,
-                       int16_t pitch10,
-                       int16_t yaw10);
+/* Compose a complete CCSDS Space Packet carrying a PUS 3/25 HK report.
+ * Returns the total packet size on success, 0 on buffer overflow. */
+size_t telemetry_compose_hk(uint8_t *buf, size_t buf_len,
+                            ApogeeMode mode,
+                            uint32_t tick_count,
+                            int32_t lat_e7,
+                            int32_t lon_e7,
+                            uint32_t alt_m,
+                            uint16_t battery_mv,
+                            int16_t roll10,
+                            int16_t pitch10,
+                            int16_t yaw10);
+
+/* TC verification report (Service 1).
+ *  - subtype 1 (acceptance success) — payload = 4B (TC packet ID + TC seq ctl)
+ *  - subtype 2 (acceptance failure) — payload = 5B (above + failure_code)
+ * APID = APOGEE_APID_ACK. Returns total packet size or 0 on overflow. */
+#define APOGEE_ACK_OK_SIZE \
+    (CCSDS_PRIMARY_HEADER_SIZE + CCSDS_PUS_TM_SEC_HDR_SIZE + 4u + CCSDS_CRC_SIZE)
+#define APOGEE_ACK_FAIL_SIZE \
+    (CCSDS_PRIMARY_HEADER_SIZE + CCSDS_PUS_TM_SEC_HDR_SIZE + 5u + CCSDS_CRC_SIZE)
+
+size_t telemetry_compose_ack(uint8_t *buf, size_t buf_len,
+                             bool success, uint8_t failure_code,
+                             uint16_t tc_apid, uint16_t tc_seq);
 
 #endif /* APOGEE_TELEMETRY_H */

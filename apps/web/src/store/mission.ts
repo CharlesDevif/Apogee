@@ -1,5 +1,10 @@
 import { create } from "zustand";
-import type { TelemetrySample, TleEntry, TleBundle } from "@apogee/shared-types";
+import type {
+  CommandRequest,
+  TelemetrySample,
+  TleEntry,
+  TleBundle,
+} from "@apogee/shared-types";
 import type { OrbitPoint, SatPosition } from "../workers/sgp4.worker";
 
 export type LinkState =
@@ -7,6 +12,19 @@ export type LinkState =
   | { kind: "connecting" }
   | { kind: "open"; since: number }
   | { kind: "closed"; lastError?: string };
+
+export type Transmission = {
+  seq: number;
+  command: CommandRequest["command"];
+  /** Optional argument string for display (e.g. "NOMINAL" for SET_MODE). */
+  arg: string | null;
+  sentAt: number;
+  sizeBytes: number;
+  ackAt: number | null;
+  success: boolean | null;
+  /** Maps to firmware CommandOutcome enum on failure. */
+  failureCode: number | null;
+};
 
 type MissionState = {
   link: LinkState;
@@ -17,6 +35,10 @@ type MissionState = {
   cubesat: TelemetrySample | null;
   cubesatLastAt: number | null;
   events: Array<{ ts: number; level: "info" | "ok" | "warn" | "alert"; text: string }>;
+  /** TC log keyed by sequence number. We never delete: history is the audit. */
+  transmissions: Map<number, Transmission>;
+  /** Order of seqs as they were sent. */
+  transmissionOrder: number[];
 
   setLink: (s: LinkState) => void;
   setTle: (b: TleBundle) => void;
@@ -25,6 +47,11 @@ type MissionState = {
   setOrbit: (orbit: { noradId: number; points: OrbitPoint[] } | null) => void;
   setCubesat: (sample: TelemetrySample) => void;
   pushEvent: (level: "info" | "ok" | "warn" | "alert", text: string) => void;
+  pushTransmissionSent: (t: Omit<Transmission, "ackAt" | "success" | "failureCode">) => void;
+  resolveTransmissionAck: (
+    seq: number,
+    ack: { ackAt: number; success: boolean; failureCode: number | null },
+  ) => void;
 };
 
 export const useMissionStore = create<MissionState>((set) => ({
@@ -39,6 +66,8 @@ export const useMissionStore = create<MissionState>((set) => ({
     { ts: Date.now(), level: "ok", text: "boot complete" },
     { ts: Date.now(), level: "info", text: "awaiting tle source" },
   ],
+  transmissions: new Map(),
+  transmissionOrder: [],
 
   setLink: (link) => set({ link }),
   setTle: (tle) => set({ tle }),
@@ -54,6 +83,23 @@ export const useMissionStore = create<MissionState>((set) => ({
     set((s) => ({
       events: [...s.events, { ts: Date.now(), level, text }].slice(-50),
     })),
+  pushTransmissionSent: (t) =>
+    set((s) => {
+      const next = new Map(s.transmissions);
+      next.set(t.seq, { ...t, ackAt: null, success: null, failureCode: null });
+      return {
+        transmissions: next,
+        transmissionOrder: [...s.transmissionOrder, t.seq].slice(-200),
+      };
+    }),
+  resolveTransmissionAck: (seq, ack) =>
+    set((s) => {
+      const existing = s.transmissions.get(seq);
+      if (!existing) return s;
+      const next = new Map(s.transmissions);
+      next.set(seq, { ...existing, ...ack });
+      return { transmissions: next };
+    }),
 }));
 
 export function tleEntryById(

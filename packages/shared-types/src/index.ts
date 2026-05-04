@@ -18,11 +18,29 @@ export type WSServerMessage =
   | { type: "tle_bundle"; payload: TleBundle }
   | { type: "telemetry"; payload: TelemetrySample }
   | { type: "alert"; payload: Alert }
-  | { type: "pong"; payload: { t: number } };
+  | { type: "pong"; payload: { t: number } }
+  | { type: "command_sent"; payload: CommandSent }
+  | { type: "command_ack"; payload: CommandAck };
 
 export type WSClientMessage =
   | { type: "ping"; payload: { t: number } }
   | { type: "command"; payload: CommandRequest };
+
+export type CommandSent = {
+  ts: number;
+  seq: number;
+  command: CommandRequest["command"];
+  size_bytes: number;
+};
+
+export type CommandAck = {
+  ts: number;
+  success: boolean;
+  /** PUS-mapped failure code (matches firmware CommandOutcome enum) */
+  failure_code: number | null;
+  tc_apid: number;
+  tc_seq: number;
+};
 
 // Reserved for Phase 2 / Phase 3
 export type TelemetrySample = {
@@ -41,7 +59,7 @@ export type Alert = {
   message: string;
 };
 
-export type CommandRequest = {
-  command: "PING" | "SET_MODE" | "REBOOT";
-  args?: Record<string, unknown>;
-};
+export type CommandRequest =
+  | { command: "PING" }
+  | { command: "SET_MODE"; mode: "SAFE" | "NOMINAL" | "COMMS" | "FAULT" }
+  | { command: "REBOOT" };

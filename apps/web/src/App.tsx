@@ -24,6 +24,7 @@ import { SatelliteLayer } from "./features/satellites/SatelliteLayer";
 import { OrbitLayer } from "./features/satellites/OrbitLayer";
 import { CubeSatLayer } from "./features/cubesat/CubeSatLayer";
 import { TrackBar } from "./features/track/TrackBar";
+import { CommandConsole } from "./features/console/CommandConsole";
 
 const ionToken = import.meta.env.VITE_CESIUM_ION_TOKEN as string | undefined;
 if (ionToken) Ion.defaultAccessToken = ionToken;
@@ -168,6 +169,7 @@ export default function App() {
       <TrackBar viewer={viewerInstance} />
       <Crosshair />
       <CornerFrame />
+      <CommandConsole />
 
       <header className="pointer-events-none absolute top-0 left-0 right-0 px-6 pt-4 z-[60]">
         <div className="flex items-start justify-between gap-8">
