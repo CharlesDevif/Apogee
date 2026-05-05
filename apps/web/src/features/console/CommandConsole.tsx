@@ -9,6 +9,7 @@ import {
 import { useMissionStore, type Transmission } from "../../store/mission";
 import { sendCommand } from "../../lib/ws";
 import { complete, parse, VOCAB } from "./parser";
+import { PacketInspector } from "./PacketInspector";
 
 /* PUS-mapped failure codes (mirror of firmware CommandOutcome enum). */
 const FAILURE_LABEL: Record<number, string> = {
@@ -44,11 +45,13 @@ function formatUtc(ts: number): string {
 }
 
 export function CommandConsole() {
+  const targetId = useMissionStore((s) => s.selectedCubesat);
   const transmissions = useMissionStore((s) => s.transmissions);
   const order = useMissionStore((s) => s.transmissionOrder);
   const link = useMissionStore((s) => s.link);
   const cubesat = useMissionStore((s) => s.cubesat);
   const cubesatLastAt = useMissionStore((s) => s.cubesatLastAt);
+  const clearSelection = useMissionStore((s) => s.clearSelection);
 
   const linkOpen = link.kind === "open";
 
@@ -59,7 +62,18 @@ export function CommandConsole() {
   const [hiddenBefore, setHiddenBefore] = useState<number>(-1);
   const [filter, setFilter] = useState<Filter>("ALL");
   const [armedDeadline, setArmedDeadline] = useState<number | null>(null);
+  const [expandedSeq, setExpandedSeq] = useState<number | null>(null);
+  const [inspectorView, setInspectorView] = useState<"tc" | "ack">("tc");
   const [, forceTick] = useState(0);
+
+  /* Console height — resizable via top handle, persisted across sessions. */
+  const [consoleHeight, setConsoleHeight] = useState<number>(() => {
+    if (typeof window === "undefined") return 380;
+    const saved = window.localStorage.getItem("apogee.console.height");
+    const n = saved ? Number(saved) : NaN;
+    return Number.isFinite(n) && n >= 240 && n <= 900 ? n : 380;
+  });
+  const resizeStartRef = useRef<{ startY: number; startH: number } | null>(null);
 
   /* 1Hz tick so "LAST TM" age advances even when no new TM lands. */
   useEffect(() => {
@@ -132,19 +146,36 @@ export function CommandConsole() {
     return () => window.clearTimeout(id);
   }, [armedDeadline]);
 
-  /* Global "/" focuses the console input — terminal habit. */
+  /* Resize handlers — pointer events for both mouse and touch. */
+  function onResizeStart(e: React.PointerEvent<HTMLDivElement>) {
+    e.preventDefault();
+    e.stopPropagation();
+    (e.target as Element).setPointerCapture(e.pointerId);
+    resizeStartRef.current = { startY: e.clientY, startH: consoleHeight };
+  }
+  function onResizeMove(e: React.PointerEvent<HTMLDivElement>) {
+    const ref = resizeStartRef.current;
+    if (!ref) return;
+    /* Console grows upward, so dragging up (negative dy) increases height.
+     * Cap so we always leave ~140px clear at the top for the header band. */
+    const maxH = Math.max(280, window.innerHeight - 140);
+    const next = Math.max(240, Math.min(maxH, ref.startH - (e.clientY - ref.startY)));
+    setConsoleHeight(next);
+  }
+  function onResizeEnd(e: React.PointerEvent<HTMLDivElement>) {
+    if (!resizeStartRef.current) return;
+    (e.target as Element).releasePointerCapture(e.pointerId);
+    resizeStartRef.current = null;
+    window.localStorage.setItem("apogee.console.height", String(Math.round(consoleHeight)));
+  }
+
+  /* Auto-focus the input when the console is first opened on a target. */
   useEffect(() => {
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key !== "/") return;
-      const target = e.target as HTMLElement | null;
-      const tag = target?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) return;
-      e.preventDefault();
-      inputRef.current?.focus();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+    if (!targetId) return;
+    const id = window.setTimeout(() => inputRef.current?.focus(), 0);
+    return () => window.clearTimeout(id);
+  }, [targetId]);
+
 
   const focusInput = useCallback(() => inputRef.current?.focus(), []);
 
@@ -247,6 +278,10 @@ export function CommandConsole() {
       return;
     }
     if (e.key === "Escape") {
+      if (input.length === 0 && armedDeadline === null && !feedback) {
+        clearSelection();
+        return;
+      }
       reset();
       setArmedDeadline(null);
       setFeedback(null);
@@ -283,15 +318,65 @@ export function CommandConsole() {
           : { label: `STALE ${tmAgeSec.toFixed(0)}s`, tone: "alert-glow" };
 
   /* ----- Render ----- */
+  if (!targetId) return null;
+
   return (
     <section
       onClick={focusInput}
-      className="pointer-events-auto absolute left-6 right-6 bottom-12 z-[60] boot-6 cursor-text"
+      className="pointer-events-auto absolute left-6 right-6 bottom-12 z-[70] boot-6 cursor-text"
+      style={{ height: `${consoleHeight}px` }}
       aria-label="Operator console"
     >
-      <div className="bracket panel">
+      {/* Resize handle — drag up/down to grow/shrink. */}
+      <div
+        onPointerDown={onResizeStart}
+        onPointerMove={onResizeMove}
+        onPointerUp={onResizeEnd}
+        onPointerCancel={onResizeEnd}
+        onClick={(e) => e.stopPropagation()}
+        className="group absolute -top-1.5 left-0 right-0 h-3 cursor-ns-resize z-10"
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Resize console"
+      >
+        <div className="absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+          <span className="block h-px w-8 bg-border group-hover:bg-phosphor/80 transition-colors" />
+          <span className="block h-1 w-1 bg-border group-hover:bg-phosphor transition-colors" />
+          <span className="block h-px w-8 bg-border group-hover:bg-phosphor/80 transition-colors" />
+        </div>
+      </div>
+
+      <div className="bracket panel h-full flex flex-col">
+        {/* ────────────────── Target bar ────────────────── */}
+        <div className="flex items-center justify-between border-b border-border bg-rail/40 px-4 py-1.5 shrink-0">
+          <div className="flex items-baseline gap-3">
+            <span className="text-[9px] tracking-[0.3em] text-dim uppercase">
+              TARGET
+            </span>
+            <span className="font-display text-phosphor text-[14px] tracking-[0.18em]">
+              {targetId}
+            </span>
+            <span className="text-[9px] tracking-[0.3em] text-dim uppercase">
+              · COMMANDABLE · CCSDS PUS-C
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              clearSelection();
+            }}
+            className="text-[9px] tracking-[0.3em] text-dim hover:text-ink uppercase"
+            aria-label="Deselect target"
+          >
+            ✕ DESELECT
+            <span className="text-deep ml-2">·</span>
+            <span className="ml-2">ESC</span>
+          </button>
+        </div>
+
         {/* ────────────────── State strip ────────────────── */}
-        <div className="grid grid-cols-[1.4fr_1fr_1fr_1fr_1.6fr] gap-0 border-b border-border">
+        <div className="grid grid-cols-[1.4fr_1fr_1fr_1fr_1.6fr] gap-0 border-b border-border shrink-0">
           <StateCell label="MODE" big>
             <span className={`font-display text-[20px] tracking-[0.18em] ${modeColor}`}>
               {mode ?? "OFFLINE"}
@@ -335,7 +420,7 @@ export function CommandConsole() {
         </div>
 
         {/* ────────────────── Filter chips ────────────────── */}
-        <div className="flex items-center justify-between px-4 py-2 border-b border-border/60">
+        <div className="flex items-center justify-between px-4 py-2 border-b border-border/60 shrink-0">
           <div className="flex items-center gap-3 text-[9px] tracking-[0.3em] uppercase">
             <span className="text-phosphor">[</span>
             <span className="text-dim">CMD LOG</span>
@@ -375,7 +460,7 @@ export function CommandConsole() {
         {/* ────────────────── Log ────────────────── */}
         <div
           ref={logRef}
-          className="text-[11px] leading-[1.55] tnum overflow-y-auto h-[148px]"
+          className="flex-1 min-h-0 text-[11px] leading-[1.55] tnum overflow-y-auto"
           aria-live="polite"
         >
           {filteredSeqs.length === 0 ? (
@@ -388,14 +473,38 @@ export function CommandConsole() {
             filteredSeqs.map((seq) => {
               const t = transmissions.get(seq);
               if (!t) return null;
-              return <LogRow key={seq} t={t} />;
+              const expanded = expandedSeq === seq;
+              return (
+                <div key={seq}>
+                  <LogRow
+                    t={t}
+                    expanded={expanded}
+                    onToggle={() => {
+                      if (expanded) {
+                        setExpandedSeq(null);
+                      } else {
+                        setExpandedSeq(seq);
+                        setInspectorView("tc");
+                      }
+                    }}
+                  />
+                  {expanded ? (
+                    <InspectorPanel
+                      t={t}
+                      view={inspectorView}
+                      onChangeView={setInspectorView}
+                      onClose={() => setExpandedSeq(null)}
+                    />
+                  ) : null}
+                </div>
+              );
             })
           )}
         </div>
 
         {/* ────────────────── Input ────────────────── */}
         <div
-          className={`border-t flex items-center gap-3 px-4 py-2.5 ${
+          className={`border-t flex items-center gap-3 px-4 py-2.5 shrink-0 ${
             armedDeadline !== null ? "border-alert/60" : "border-border"
           }`}
         >
@@ -428,7 +537,7 @@ export function CommandConsole() {
         </div>
 
         {/* ────────────────── Vocab + hotkeys ────────────────── */}
-        <div className="flex items-center justify-between gap-4 px-4 pb-2 text-[9px] tracking-[0.25em] uppercase">
+        <div className="flex items-center justify-between gap-4 px-4 pb-2 text-[9px] tracking-[0.25em] uppercase shrink-0">
           <div className="flex items-center gap-2 text-dim flex-wrap">
             <span className="text-deep">[</span>
             {VOCAB.map((v, i) => (
@@ -459,8 +568,6 @@ export function CommandConsole() {
                 {feedback.text}
               </span>
             ) : null}
-            <span className="text-dim">/ FOCUS</span>
-            <span className="text-deep">·</span>
             <span className="text-dim">↑↓ HISTORY</span>
             <span className="text-deep">·</span>
             <span className="text-dim">TAB COMPLETE</span>
@@ -494,7 +601,15 @@ function StateCell({
 
 /* ─────────────── Log row ─────────────── */
 
-function LogRow({ t }: { t: Transmission }) {
+function LogRow({
+  t,
+  expanded,
+  onToggle,
+}: {
+  t: Transmission;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
   const status = statusOf(t);
   const barColor =
     status === "ok"
@@ -537,9 +652,22 @@ function LogRow({ t }: { t: Transmission }) {
   }
 
   return (
-    <div className="flex items-stretch hover:bg-rail/40 transition-colors">
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onToggle();
+      }}
+      className={`w-full flex items-stretch text-left transition-colors ${
+        expanded ? "bg-rail/60" : "hover:bg-rail/40"
+      }`}
+      aria-expanded={expanded}
+    >
       <div className={`w-[3px] ${barColor}`} />
       <div className="flex-1 px-4 py-1 flex items-baseline gap-3 whitespace-pre">
+        <span className={`${expanded ? "phosphor" : "text-deep"} w-[10px] shrink-0`}>
+          {expanded ? "▼" : "▶"}
+        </span>
         <span className="text-dim">{utcLabel}</span>
         <span className="text-deep">·</span>
         <span className={arrowColor}>▶</span>
@@ -549,6 +677,66 @@ function LogRow({ t }: { t: Transmission }) {
         <span className={`${cmdColor} w-[180px] inline-block`}>{cmdLabel}</span>
         <span className="flex-1">{trailing}</span>
       </div>
+    </button>
+  );
+}
+
+function InspectorPanel({
+  t,
+  view,
+  onChangeView,
+  onClose,
+}: {
+  t: Transmission;
+  view: "tc" | "ack";
+  onChangeView: (v: "tc" | "ack") => void;
+  onClose: () => void;
+}) {
+  const hasAck = t.ackBytes !== null;
+  const bytes = view === "tc" || !hasAck ? t.tcBytes : (t.ackBytes ?? t.tcBytes);
+  const title =
+    view === "tc"
+      ? `TC#${String(t.seq).padStart(3, "0")} · ${t.command}${t.arg ? ` ${t.arg}` : ""}`
+      : `ACK · TC#${String(t.seq).padStart(3, "0")}`;
+
+  return (
+    <div onClick={(e) => e.stopPropagation()}>
+      {/* Tab bar TC / ACK */}
+      <div className="flex items-center gap-2 border-t border-border/60 bg-rail/40 px-4 py-1.5 text-[9px] tracking-[0.3em] uppercase">
+        <button
+          type="button"
+          onClick={() => onChangeView("tc")}
+          className={`px-2 py-0.5 ${
+            view === "tc" ? "phosphor border-b border-phosphor" : "text-dim hover:text-ink"
+          }`}
+        >
+          TC · {t.tcBytes.length}B
+        </button>
+        <button
+          type="button"
+          onClick={() => onChangeView("ack")}
+          disabled={!hasAck}
+          className={`px-2 py-0.5 ${
+            !hasAck
+              ? "text-deep cursor-not-allowed"
+              : view === "ack"
+                ? "jade border-b border-jade"
+                : "text-dim hover:text-ink"
+          }`}
+        >
+          ACK {hasAck ? `· ${t.ackBytes!.length}B` : "· pending"}
+        </button>
+        <span className="flex-1" />
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-dim hover:text-ink"
+          aria-label="Close inspector"
+        >
+          ✕ CLOSE
+        </button>
+      </div>
+      <PacketInspector bytes={bytes} title={title} />
     </div>
   );
 }

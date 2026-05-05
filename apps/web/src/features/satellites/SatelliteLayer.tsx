@@ -35,6 +35,8 @@ export function SatelliteLayer({
   const positions = useMissionStore((s) => s.positions);
   const selected = useMissionStore((s) => s.selectedNoradId);
   const selectSat = useMissionStore((s) => s.selectSat);
+  const selectCubesat = useMissionStore((s) => s.selectCubesat);
+  const clearSelection = useMissionStore((s) => s.clearSelection);
   const entitiesRef = useRef<Map<number, Entity>>(new Map());
 
   useEffect(() => {
@@ -51,15 +53,19 @@ export function SatelliteLayer({
             return;
           }
         }
+        if (id === "apogee-cubesat") {
+          selectCubesat("APOGEE-1");
+          return;
+        }
       }
-      selectSat(null);
+      clearSelection();
       viewer.trackedEntity = undefined;
     };
     handler.setInputAction(action, ScreenSpaceEventType.LEFT_CLICK);
     return () => {
       handler.removeInputAction(ScreenSpaceEventType.LEFT_CLICK);
     };
-  }, [viewer, selectSat]);
+  }, [viewer, selectSat, selectCubesat, clearSelection]);
 
   useEffect(() => {
     if (!viewer) return;

@@ -33,6 +33,7 @@ function modeColor(mode: string): Color {
 
 export function CubeSatLayer({ viewer }: { viewer: CesiumViewer | null }) {
   const cubesat = useMissionStore((s) => s.cubesat);
+  const isSelected = useMissionStore((s) => s.selectedCubesat === "APOGEE-1");
   const entityRef = useRef<Entity | null>(null);
 
   useEffect(() => {
@@ -48,19 +49,25 @@ export function CubeSatLayer({ viewer }: { viewer: CesiumViewer | null }) {
 
     const cart = Cartesian3.fromDegrees(cubesat.lon, cubesat.lat, cubesat.alt_m);
     const color = modeColor(cubesat.mode);
+    const outlineColor = isSelected ? ALERT : PHOSPHOR;
+    const outlineWidth = isSelected ? 4 : 3;
+    const pixelSize = isSelected ? 20 : 16;
+    const labelText = isSelected
+      ? `▶ APOGÉE-1 · ${cubesat.mode} · TARGETED`
+      : `APOGÉE-1 · ${cubesat.mode}`;
 
     if (!entityRef.current) {
       entityRef.current = viewer.entities.add({
         id: CUBESAT_ID,
         position: new ConstantPositionProperty(cart),
         point: {
-          pixelSize: 16,
+          pixelSize,
           color,
-          outlineColor: PHOSPHOR,
-          outlineWidth: 3,
+          outlineColor,
+          outlineWidth,
         },
         label: {
-          text: `APOGÉE-1 · ${cubesat.mode}`,
+          text: labelText,
           font: '11px "Major Mono Display", monospace',
           fillColor: PHOSPHOR,
           outlineColor: Color.BLACK,
@@ -79,14 +86,15 @@ export function CubeSatLayer({ viewer }: { viewer: CesiumViewer | null }) {
       (e.position as ConstantPositionProperty).setValue(cart);
       if (e.point) {
         (e.point.color as ConstantProperty).setValue(color);
+        (e.point.outlineColor as ConstantProperty).setValue(outlineColor);
+        (e.point.outlineWidth as ConstantProperty).setValue(outlineWidth);
+        (e.point.pixelSize as ConstantProperty).setValue(pixelSize);
       }
       if (e.label) {
-        (e.label.text as ConstantProperty).setValue(
-          `APOGÉE-1 · ${cubesat.mode}`,
-        );
+        (e.label.text as ConstantProperty).setValue(labelText);
       }
     }
-  }, [viewer, cubesat]);
+  }, [viewer, cubesat, isSelected]);
 
   useEffect(() => {
     return () => {

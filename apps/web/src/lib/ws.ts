@@ -50,6 +50,7 @@ export function connect() {
         arg: pendingArgs.shift() ?? null,
         sentAt: p.ts,
         sizeBytes: p.size_bytes,
+        tcBytes: hexToBytes(p.bytes_hex),
       });
     } else if (msg.type === "command_ack") {
       const p = msg.payload;
@@ -57,6 +58,7 @@ export function connect() {
         ackAt: p.ts,
         success: p.success,
         failureCode: p.failure_code,
+        ackBytes: hexToBytes(p.bytes_hex),
       });
     }
   };
@@ -86,6 +88,15 @@ export function sendCommand(req: CommandRequest): boolean {
 }
 
 const pendingArgs: (string | null)[] = [];
+
+function hexToBytes(hex: string): Uint8Array {
+  const len = hex.length >> 1;
+  const out = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    out[i] = parseInt(hex.substr(i * 2, 2), 16);
+  }
+  return out;
+}
 
 export function disconnect() {
   if (reconnectTimer) {

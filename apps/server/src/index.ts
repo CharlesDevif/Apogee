@@ -158,6 +158,7 @@ function handleCommandRequest(req: CommandRequest): void {
         seq: encoded.seq,
         command: req.command,
         size_bytes: encoded.buffer.length,
+        bytes_hex: encoded.buffer.toString("hex"),
       },
     });
   });
@@ -217,6 +218,7 @@ fwSocket.on("message", (data, rinfo) => {
         failure_code: result.failureCode,
         tc_apid: result.tcApid,
         tc_seq: result.tcSeq,
+        bytes_hex: data.toString("hex"),
       },
     });
     return;

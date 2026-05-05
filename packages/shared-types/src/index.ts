@@ -31,6 +31,8 @@ export type CommandSent = {
   seq: number;
   command: CommandRequest["command"];
   size_bytes: number;
+  /** Hex string of the raw CCSDS TC packet emitted on the wire. */
+  bytes_hex: string;
 };
 
 export type CommandAck = {
@@ -40,6 +42,8 @@ export type CommandAck = {
   failure_code: number | null;
   tc_apid: number;
   tc_seq: number;
+  /** Hex string of the raw CCSDS TM ack packet received from the firmware. */
+  bytes_hex: string;
 };
 
 // Reserved for Phase 2 / Phase 3
