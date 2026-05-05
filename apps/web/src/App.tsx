@@ -134,7 +134,7 @@ export default function App() {
   const linkHint =
     link.kind === "open"
       ? `since ${new Date(link.since).toLocaleTimeString()}`
-      : "ws · :3001/ws";
+      : `ws · :${import.meta.env.VITE_BACKEND_PORT ?? "3001"}/ws`;
 
   const tleHint = tle
     ? `${tle.entries.length} entries · age ${Math.floor((Date.now() - tle.fetchedAt) / 1000)}s`
