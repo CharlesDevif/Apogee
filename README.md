@@ -139,7 +139,3 @@ Avant de toucher au code, lire :
 ## Licence
 
 MIT.
-
----
-
-*Apogée est un projet personnel de Charles, basé à Bessan (Hérault). Cible : équipes spatiales françaises (Look Up Space, CS Group, Thales Alenia Space, Airbus DS, CLS) et communauté sécu spatiale.*
