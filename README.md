@@ -12,8 +12,9 @@
 - 🛰️ **CubeSat simulé `APOGÉE-1`** : firmware C autonome, state machine `BOOT → SAFE → NOMINAL → COMMS → FAULT`, orbite ISO-like (incl. 51.6°, période 92 min), gestion batterie, télémétrie **CCSDS Space Packet · PUS 3/25 housekeeping** à 10 Hz.
 - 📡 **Backend Node** : pull TLE Celestrak, dispatch UDP par APID (HK / TC verification), encodage des télécommandes, broadcast WebSocket au frontend, vérification CRC-16-CCITT sur tout paquet.
 - 🎯 **Tracking unifié** : `/` ouvre une barre de recherche fuzzy ; click sur un satellite → la caméra y vole, son orbite complète apparaît en pointillés phosphore, sa lat/lon/alt s'affiche en live.
-- ⌨️ **Console opérateur** plein-bas : bandeau d'état permanent (mode, batterie, âge dernier TM, link, TC OK/FAIL/PEND), log filtrable avec UTC absolu + latency, REPL avec history (↑↓), tab complete, hotkey `/` global. **Confirmation 2 étapes pour `reboot`** (ARMED → exécution).
+- ⌨️ **Console opérateur target-aware** : click sur `APOGÉE-1` pour le "cibler" (▶ rouge sur le label), la console s'arrime en bas. Esc ou click ailleurs pour désélectionner. Bandeau d'état (mode, batterie, âge dernier TM, link, TC OK/FAIL/PEND), log filtrable avec UTC absolu + latency, REPL avec history (↑↓), tab complete, hotkey `/` global. **Confirmation 2 étapes pour `reboot`** (ARMED → exécution). Console **redimensionnable** par drag du haut, taille mémorisée.
 - 🔁 **Chaîne de commandes** UI → backend → firmware : `PING` (PUS 17/1), `SET_MODE` et `REBOOT` (PUS 8/1). Chaque TC reçoit un ack `PUS 1/1` (success) ou `1/2` (failure avec code mappé sur l'enum `CommandOutcome` du firmware).
+- 🔍 **Packet inspector** : click sur n'importe quelle ligne du log TC → panneau qui affiche **les vrais octets** capturés au moment du `sendto`/`recvfrom` (pas re-encodés), décodés en zones colorées (primary header / PUS-C / payload / CRC) avec hover synchronisé entre les champs nommés et le hex dump. Onglets séparés pour le TC et son ACK.
 - 🎨 **HUD mission control brutaliste** : phosphore CRT, scanlines, grain, brackets, typo *Major Mono Display* + *JetBrains Mono* — design system documenté, anti-AI-slop assumé.
 
 ## Démo en 30 secondes
@@ -31,10 +32,13 @@ Ouvre <http://localhost:5173>.
 1. Le globe se centre sur l'Europe, 35 satellites apparaissent et bougent.
 2. Tape <kbd>/</kbd>, écris `iss`, ⏎ — la caméra zoom sur l'ISS, son orbite se trace.
 3. Le point ambre `APOGÉE-1` apparaît, traverse l'Atlantique, l'Europe, l'Asie en quelques minutes.
-4. Le bandeau console en bas affiche : `MODE: SAFE`, `BATTERY: 7.40 V`, `LAST TM: 0.2s`, `LINK: OPEN`.
-5. Tape <kbd>/</kbd>, puis `nominal` <kbd>⏎</kbd> — TC#001 part, ACK OK ~10 ms après, le mode passe à `NOMINAL`.
-6. Tape `reboot` <kbd>⏎</kbd> — ARMED 2 s, <kbd>⏎</kbd> à nouveau pour confirmer. Le firmware fait un fresh BOOT.
-7. Coupe le firmware (<kbd>Ctrl+C</kbd>) — le link passe `disconnected`, le point disparaît, `LAST TM` passe en `STALE`.
+4. Click sur `APOGÉE-1` → il devient ciblé, le panneau BEACON à droite affiche `MODE: SAFE`, `BATTERY: 7.40 V`, `LAST TM: 0.2s`, la console s'arrime en bas.
+5. Dans la console : tape <kbd>/</kbd>, puis `nominal` <kbd>⏎</kbd> — TC#001 part, ACK OK ~10 ms après, le mode passe à `NOMINAL`.
+6. Click sur la ligne du log TC — le packet inspector s'ouvre, les 14 octets exacts qui ont voyagé sur l'UDP s'affichent en zones colorées.
+7. Tape `reboot` <kbd>⏎</kbd> — ARMED 2 s, <kbd>⏎</kbd> à nouveau pour confirmer. Le firmware fait un fresh BOOT.
+8. Coupe le firmware (<kbd>Ctrl+C</kbd>) — le link passe `disconnected`, le point disparaît, `LAST TM` passe en `STALE`.
+
+> 💡 Le dev server Vite expose aussi ton IP réseau (`http://<ton-ip>:5173`) — pratique pour montrer la démo à un collègue sur le même Wi-Fi sans déployer.
 
 ## Architecture
 
@@ -99,7 +103,7 @@ Apogée est à la fois :
 - [x] **Phase 0** — squelette monorepo, globe Cesium vide, `/api/health`
 - [x] **Phase 1** — TLE Celestrak, propagation SGP4, satellites Terre temps réel, tracking + orbites
 - [x] **Phase 2.1–2.5** — firmware C autonome, télémétrie binaire UDP, state machine, physics, CubeSat live sur le globe
-- [x] **Phase 2.6** — migration CCSDS + PUS-C, chaîne de commandes UI → backend → firmware (PING, SET_MODE, REBOOT), TC verification (acks), console opérateur
+- [x] **Phase 2.6** — migration CCSDS + PUS-C, chaîne de commandes UI → backend → firmware (PING, SET_MODE, REBOOT), TC verification (acks), console opérateur target-aware, packet inspector (vrais octets décodés en zones colorées)
 - [ ] **Phase 3 — Sécurité** — couche HMAC sur les commandes, détection d'anomalies, **mode "attaque" pour démo CYSAT/DEF CON** (replay, tampering, HMAC strip)
 - [ ] **Phase 4** — intégration SatNOGS, hardware-in-the-loop optionnel (cross-compile Raspberry Pi / STM32)
 
@@ -114,8 +118,9 @@ Avant de toucher au code, lire :
 | [`docs/DESIGN_SYSTEM.md`](docs/DESIGN_SYSTEM.md) | Tokens, primitives, anti-AI-slop, règles d'évolution |
 | [`docs/REACT_CONVENTIONS.md`](docs/REACT_CONVENTIONS.md) | React 19 moderne, TypeScript strict, anti-patterns |
 | [`docs/PROTOCOL.md`](docs/PROTOCOL.md) | CCSDS Space Packet + PUS-C, APIDs Apogée, encodage bit-à-bit |
-| [`docs/COURS_C_FIRMWARE.md`](docs/COURS_C_FIRMWARE.md) | Tour pédagogique du firmware C (modules, choix, pièges) |
-| [`docs/COURS_COMMS_PROTOCOLE.md`](docs/COURS_COMMS_PROTOCOLE.md) | Tour pédagogique du protocole : BE, primary header, PUS, CRC, traces |
+| [`docs/COURS_C_FIRMWARE.md`](docs/COURS_C_FIRMWARE.md) | Tour de référence du firmware C (dense — à relire après le parcours) |
+| [`docs/COURS_COMMS_PROTOCOLE.md`](docs/COURS_COMMS_PROTOCOLE.md) | Tour de référence du protocole : BE, primary header, PUS, CRC, traces |
+| [`docs/cours/INDEX.md`](docs/cours/INDEX.md) | **Parcours d'apprentissage progressif** C → embarqué → CCSDS (en construction) |
 
 ## Métriques actuelles
 
