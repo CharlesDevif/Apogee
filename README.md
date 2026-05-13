@@ -2,7 +2,7 @@
 
 > Mini centre de contrôle de mission CubeSat — **boucle bout-en-bout** : firmware C en allocation statique → CCSDS Space Packets sur UDP → backend Node → globe 3D Cesium temps réel + console opérateur.
 
-[![Phase](https://img.shields.io/badge/phase-2.6-ffb700?style=flat-square)]() [![C](https://img.shields.io/badge/firmware-C11_static-7dffb1?style=flat-square)]() [![Stack](https://img.shields.io/badge/stack-React_19_·_TS_strict_·_Vite-04070a?style=flat-square)]() [![Protocol](https://img.shields.io/badge/protocol-CCSDS_133.0--B--2_+_PUS--C-7dffb1?style=flat-square)]() [![Licence](https://img.shields.io/badge/licence-MIT-1c2c38?style=flat-square)]()
+[![Phase](https://img.shields.io/badge/phase-3.2-ffb700?style=flat-square)]() [![C](https://img.shields.io/badge/firmware-C11_static-7dffb1?style=flat-square)]() [![Stack](https://img.shields.io/badge/stack-React_19_·_TS_strict_·_Vite-04070a?style=flat-square)]() [![Protocol](https://img.shields.io/badge/protocol-CCSDS_133.0--B--2_+_PUS--C-7dffb1?style=flat-square)]() [![Auth](https://img.shields.io/badge/auth-HMAC--SHA--256_128b-ff4d3d?style=flat-square)]() [![Licence](https://img.shields.io/badge/licence-MIT-1c2c38?style=flat-square)]()
 
 ---
 
@@ -12,9 +12,11 @@
 - 🛰️ **CubeSat simulé `APOGÉE-1`** : firmware C autonome, state machine `BOOT → SAFE → NOMINAL → COMMS → FAULT`, orbite ISO-like (incl. 51.6°, période 92 min), gestion batterie, télémétrie **CCSDS Space Packet · PUS 3/25 housekeeping** à 10 Hz.
 - 📡 **Backend Node** : pull TLE Celestrak, dispatch UDP par APID (HK / TC verification), encodage des télécommandes, broadcast WebSocket au frontend, vérification CRC-16-CCITT sur tout paquet.
 - 🎯 **Tracking unifié** : `/` ouvre une barre de recherche fuzzy ; click sur un satellite → la caméra y vole, son orbite complète apparaît en pointillés phosphore, sa lat/lon/alt s'affiche en live.
-- ⌨️ **Console opérateur target-aware** : click sur `APOGÉE-1` pour le "cibler" (▶ rouge sur le label), la console s'arrime en bas. Esc ou click ailleurs pour désélectionner. Bandeau d'état (mode, batterie, âge dernier TM, link, TC OK/FAIL/PEND), log filtrable avec UTC absolu + latency, REPL avec history (↑↓), tab complete, hotkey `/` global. **Confirmation 2 étapes pour `reboot`** (ARMED → exécution). Console **redimensionnable** par drag du haut, taille mémorisée.
+- ⌨️ **Console opérateur target-aware** : click sur `APOGÉE-1` pour le "cibler" (▶ rouge sur le label), la console s'arrime en bas. Esc ou click ailleurs pour désélectionner. Bandeau d'état (mode, batterie, âge dernier TM, link, TC OK/FAIL/PEND), log filtrable avec UTC absolu + latency, REPL avec history (↑↓), tab complete. **Confirmation 2 étapes pour `reboot`** (ARMED → exécution). Console **redimensionnable** par drag du haut, taille mémorisée.
 - 🔁 **Chaîne de commandes** UI → backend → firmware : `PING` (PUS 17/1), `SET_MODE` et `REBOOT` (PUS 8/1). Chaque TC reçoit un ack `PUS 1/1` (success) ou `1/2` (failure avec code mappé sur l'enum `CommandOutcome` du firmware).
-- 🔍 **Packet inspector** : click sur n'importe quelle ligne du log TC → panneau qui affiche **les vrais octets** capturés au moment du `sendto`/`recvfrom` (pas re-encodés), décodés en zones colorées (primary header / PUS-C / payload / CRC) avec hover synchronisé entre les champs nommés et le hex dump. Onglets séparés pour le TC et son ACK.
+- 🔐 **Authentification HMAC-SHA-256** (truncated 128b) sur chaque télécommande, vérifiée bord par comparaison constant-time. **Anti-replay** par compteur de séquence. Implémentation crypto C pure validée contre les vecteurs RFC 4231.
+- 🔴 **Red team toolkit** : toggle BLUE OPS / RED TEAM dans la console. Packet crafter avec 5 attaques préconfigurées (REPLAY, STRIP_MAC, BIT_FLIP, CORRUPT_CRC, FORGE) qui injectent des bytes raw bypassant le signing — toutes rejetées par le firmware avec les bons codes (`BAD_HMAC`, `BAD_CRC`, `REPLAY`). Démontre la défense en profondeur.
+- 🔬 **Packet Inspector** : click sur n'importe quelle ligne du log → panneau qui affiche **les vrais octets** capturés au moment du `sendto`/`recvfrom` (pas re-encodés), décodés en zones colorées (Primary Header / PUS-C / Payload / HMAC / CRC) avec hover synchronisé entre les champs nommés et le hex dump. Onglets séparés pour le TC et son ACK, plus un onglet `◆ ATTACK` en RED MODE.
 - 🎨 **HUD mission control brutaliste** : phosphore CRT, scanlines, grain, brackets, typo *Major Mono Display* + *JetBrains Mono* — design system documenté, anti-AI-slop assumé.
 
 ## Démo en 30 secondes
@@ -32,11 +34,12 @@ Ouvre <http://localhost:5173>.
 1. Le globe se centre sur l'Europe, 35 satellites apparaissent et bougent.
 2. Tape <kbd>/</kbd>, écris `iss`, ⏎ — la caméra zoom sur l'ISS, son orbite se trace.
 3. Le point ambre `APOGÉE-1` apparaît, traverse l'Atlantique, l'Europe, l'Asie en quelques minutes.
-4. Click sur `APOGÉE-1` → il devient ciblé, le panneau BEACON à droite affiche `MODE: SAFE`, `BATTERY: 7.40 V`, `LAST TM: 0.2s`, la console s'arrime en bas.
-5. Dans la console : tape <kbd>/</kbd>, puis `nominal` <kbd>⏎</kbd> — TC#001 part, ACK OK ~10 ms après, le mode passe à `NOMINAL`.
-6. Click sur la ligne du log TC — le packet inspector s'ouvre, les 14 octets exacts qui ont voyagé sur l'UDP s'affichent en zones colorées.
+4. Click sur `APOGÉE-1` → il devient ciblé (encadré rouge `TARGETED`), le panneau BEACON à droite affiche `MODE: SAFE`, `BATTERY: 7.40 V`, `LAST TM: 0.2s`, la console s'arrime en bas.
+5. Dans la console : tape `nominal` <kbd>⏎</kbd> — TC#001 **signée HMAC-SHA-256** part, ACK OK ~10 ms après, le mode passe à `NOMINAL`.
+6. Click sur la ligne du log TC — le packet inspector s'ouvre, les 30 octets exacts qui ont voyagé sur l'UDP s'affichent en zones colorées (Primary Header / PUS / Payload / HMAC / CRC).
 7. Tape `reboot` <kbd>⏎</kbd> — ARMED 2 s, <kbd>⏎</kbd> à nouveau pour confirmer. Le firmware fait un fresh BOOT.
-8. Coupe le firmware (<kbd>Ctrl+C</kbd>) — le link passe `disconnected`, le point disparaît, `LAST TM` passe en `STALE`.
+8. **Mode sécu** : toggle `RED TEAM` en haut à droite de la console, clique la ligne `SET_MODE NOMINAL` du log, onglet `◆ ATTACK`, choisis `STRIP_MAC` → preview → `INJECT`. Une nouvelle ligne rouge apparaît avec `ACK FAIL · BAD_HMAC` : le firmware a rejeté l'attaque.
+9. Coupe le firmware (<kbd>Ctrl+C</kbd>) — le link passe `disconnected`, le point disparaît, `LAST TM` passe en `STALE`.
 
 > 💡 Le dev server Vite expose aussi ton IP réseau (`http://<ton-ip>:5173`) — pratique pour montrer la démo à un collègue sur le même Wi-Fi sans déployer.
 
@@ -104,8 +107,9 @@ Apogée est à la fois :
 - [x] **Phase 1** — TLE Celestrak, propagation SGP4, satellites Terre temps réel, tracking + orbites
 - [x] **Phase 2.1–2.5** — firmware C autonome, télémétrie binaire UDP, state machine, physics, CubeSat live sur le globe
 - [x] **Phase 2.6** — migration CCSDS + PUS-C, chaîne de commandes UI → backend → firmware (PING, SET_MODE, REBOOT), TC verification (acks), console opérateur target-aware, packet inspector (vrais octets décodés en zones colorées)
-- [ ] **Phase 3 — Sécurité** — couche HMAC sur les commandes, détection d'anomalies, **mode "attaque" pour démo CYSAT/DEF CON** (replay, tampering, HMAC strip)
-- [ ] **Phase 4** — intégration SatNOGS, hardware-in-the-loop optionnel (cross-compile Raspberry Pi / STM32)
+- [x] **Phase 3.1** — Authentification HMAC-SHA-256 truncated 128b sur les TC, PSK 32o partagée firmware/backend, anti-replay seq-based, codes d'échec `BAD_HMAC` (10) + `REPLAY` (11)
+- [x] **Phase 3.2** — RED MODE + packet crafter (REPLAY · STRIP_MAC · BIT_FLIP · CORRUPT_CRC · FORGE), endpoint backend `command_raw` qui bypasse le signing, distinction visuelle attaques dans le log
+- [ ] **Phase 4** — *« Apogée Sim »* — digital twin web-based : J2 + drag atmosphérique, attitude dynamics, sun vector, IGRF, sensor/actuator emulation, scénarios + anomalies, upload de firmware user. Roadmap dans [`docs/APOGEE_SIM.md`](docs/APOGEE_SIM.md) (à venir)
 
 ## Conventions et docs
 
@@ -124,17 +128,27 @@ Avant de toucher au code, lire :
 
 ## Métriques actuelles
 
-- Bundle frontend : **237 kB JS · gzipped 70 kB**
+- Bundle frontend : **263 kB JS · gzipped 78 kB** (+ Cesium externe via plugin)
 - Worker SGP4 isolé : **22 kB**
-- Firmware binaire : **~30 kB** stripped, RAM résidente <1 KB
+- Firmware binaire : **~31 kB** stripped, RAM résidente <1 KB · crypto inclus (SHA-256 + HMAC + auth ~10 kB)
 - Build complet (3 packages) : **<2 s**
 - Télémétrie firmware : **10 Hz · 40 B (CCSDS PUS 3/25)** · 0 paquet corrompu sur >10⁴ paquets observés
+- TC authentifiée : **PING 28 B · SET_MODE 30 B · REBOOT 29 B** (CCSDS PH + PUS + Payload + **MAC 16 B** + CRC)
 - Réception WebSocket frontend : **~5 Hz** (throttled depuis le firmware 10 Hz)
-- Latency commande aller-retour (sol → firmware → ack sol) : **~5–30 ms** sur loopback
+- Latency commande aller-retour (sol → signature → UDP → vérif HMAC → ack) : **~5–30 ms** sur loopback
+- Red team E2E : **5/5 attaques rejetées** avec les bons codes (REPLAY, BAD_CRC, BAD_HMAC × 3)
 
-## Hors scope (volontaire)
+## Hors scope (volontaire, V1)
 
-- Authentification multi-utilisateurs · DB persistante · vraie radio · simulation physique haute-fidélité (J2, traînée) · déploiement cloud · i18n.
+- Authentification multi-utilisateurs · DB persistante · vraie radio · déploiement cloud · i18n.
+- **Simulation physique haute-fidélité (J2, traînée, attitude dynamics) → roadmap Phase 4 / Apogée Sim.**
+
+## Limitations connues (V1)
+
+- **Anti-replay en RAM volatile** : un attaquant qui force un reboot peut rejouer une TC pré-reboot. Mitigation V2 : compteur en NVRAM ou nonce/timestamp dans le MAC.
+- **PSK fixe** : pas de rotation de clé. V2.
+- **MAC sur TC uniquement** : les TM (HK + ACK) ne sont pas signées, spoofing TM possible. V2.
+- **Pas de confidentialité** : le payload TC reste lisible (authentification only, pas de chiffrement). Choix pédagogique assumé.
 
 ## Licence
 

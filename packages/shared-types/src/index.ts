@@ -24,15 +24,25 @@ export type WSServerMessage =
 
 export type WSClientMessage =
   | { type: "ping"; payload: { t: number } }
-  | { type: "command"; payload: CommandRequest };
+  | { type: "command"; payload: CommandRequest }
+  /* Red-team only: send raw bytes verbatim to the firmware TC port,
+   * bypassing the backend's signing logic. The server still broadcasts the
+   * resulting command_sent so the operator log captures the attack. */
+  | { type: "command_raw"; payload: { bytes_hex: string; label?: string } };
 
 export type CommandSent = {
   ts: number;
   seq: number;
-  command: CommandRequest["command"];
+  command: CommandRequest["command"] | "RAW";
   size_bytes: number;
   /** Hex string of the raw CCSDS TC packet emitted on the wire. */
   bytes_hex: string;
+  /** "operator" = legitimately signed by the backend.
+   *  "attack"   = raw bytes injected by the red-team console. */
+  origin: "operator" | "attack";
+  /** Free-text tag attached to red-team transmissions (e.g. "REPLAY",
+   *  "STRIP_MAC", "FORGE_REBOOT"). Undefined for operator commands. */
+  attack_label?: string;
 };
 
 export type CommandAck = {

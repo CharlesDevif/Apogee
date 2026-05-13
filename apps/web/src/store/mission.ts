@@ -14,14 +14,23 @@ export type LinkState =
   | { kind: "closed"; lastError?: string };
 
 export type Transmission = {
+  /** Synthetic monotonically-increasing row id. Distinct from `seq` because
+   * replayed/tampered attacks reuse the original packet's seq number — they
+   * still deserve their own row in the log. */
+  id: number;
   seq: number;
-  command: CommandRequest["command"];
+  command: CommandRequest["command"] | "RAW";
   /** Optional argument string for display (e.g. "NOMINAL" for SET_MODE). */
   arg: string | null;
   sentAt: number;
   sizeBytes: number;
   /** Raw CCSDS TC bytes as transmitted on UDP. */
   tcBytes: Uint8Array;
+  /** "operator" = signed by the backend.
+   *  "attack"   = red-team raw injection (no signing). */
+  origin: "operator" | "attack";
+  /** Attack tag (REPLAY, STRIP_MAC, FORGE_REBOOT, …) for red-team rows. */
+  attackLabel: string | null;
   ackAt: number | null;
   success: boolean | null;
   /** Maps to firmware CommandOutcome enum on failure. */
@@ -42,10 +51,12 @@ type MissionState = {
   cubesat: TelemetrySample | null;
   cubesatLastAt: number | null;
   events: Array<{ ts: number; level: "info" | "ok" | "warn" | "alert"; text: string }>;
-  /** TC log keyed by sequence number. We never delete: history is the audit. */
+  /** TC log keyed by synthetic row id. We never delete: history is the audit. */
   transmissions: Map<number, Transmission>;
-  /** Order of seqs as they were sent. */
+  /** Order of row ids as they were sent. */
   transmissionOrder: number[];
+  /** Monotonic counter used to mint new transmission ids. */
+  nextTxId: number;
 
   setLink: (s: LinkState) => void;
   setTle: (b: TleBundle) => void;
@@ -57,7 +68,7 @@ type MissionState = {
   setCubesat: (sample: TelemetrySample) => void;
   pushEvent: (level: "info" | "ok" | "warn" | "alert", text: string) => void;
   pushTransmissionSent: (
-    t: Omit<Transmission, "ackAt" | "success" | "failureCode" | "ackBytes">,
+    t: Omit<Transmission, "id" | "ackAt" | "success" | "failureCode" | "ackBytes">,
   ) => void;
   resolveTransmissionAck: (
     seq: number,
@@ -85,6 +96,7 @@ export const useMissionStore = create<MissionState>((set) => ({
   ],
   transmissions: new Map(),
   transmissionOrder: [],
+  nextTxId: 1,
 
   setLink: (link) => set({ link }),
   setTle: (tle) => set({ tle }),
@@ -115,8 +127,10 @@ export const useMissionStore = create<MissionState>((set) => ({
     })),
   pushTransmissionSent: (t) =>
     set((s) => {
+      const id = s.nextTxId;
       const next = new Map(s.transmissions);
-      next.set(t.seq, {
+      next.set(id, {
+        id,
         ...t,
         ackAt: null,
         success: null,
@@ -125,16 +139,23 @@ export const useMissionStore = create<MissionState>((set) => ({
       });
       return {
         transmissions: next,
-        transmissionOrder: [...s.transmissionOrder, t.seq].slice(-200),
+        transmissionOrder: [...s.transmissionOrder, id].slice(-200),
+        nextTxId: id + 1,
       };
     }),
+  /* Resolve the most recent unresolved transmission matching this seq.
+   * Attacks reuse seqs, so multiple rows can share a seq value. */
   resolveTransmissionAck: (seq, ack) =>
     set((s) => {
-      const existing = s.transmissions.get(seq);
-      if (!existing) return s;
-      const next = new Map(s.transmissions);
-      next.set(seq, { ...existing, ...ack });
-      return { transmissions: next };
+      for (let i = s.transmissionOrder.length - 1; i >= 0; i--) {
+        const id = s.transmissionOrder[i]!;
+        const tx = s.transmissions.get(id);
+        if (!tx || tx.seq !== seq || tx.ackAt !== null) continue;
+        const next = new Map(s.transmissions);
+        next.set(id, { ...tx, ...ack });
+        return { transmissions: next };
+      }
+      return s;
     }),
 }));
 

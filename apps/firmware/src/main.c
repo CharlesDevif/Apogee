@@ -90,6 +90,7 @@ int main(void) {
                 fprintf(stderr, "[TC] REBOOT — re-init state\n");
                 sm_init(&sm);
                 physics_init(&phys);
+                command_reset_replay_state();
             }
         }
 

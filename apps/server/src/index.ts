@@ -87,6 +87,10 @@ wss.on("connection", (ws) => {
         handleCommandRequest(msg.payload as CommandRequest);
         return;
       }
+      if (msg.type === "command_raw") {
+        handleRawCommand(msg.payload as { bytes_hex: string; label?: string });
+        return;
+      }
     } catch {
       // ignore malformed
     }
@@ -159,6 +163,44 @@ function handleCommandRequest(req: CommandRequest): void {
         command: req.command,
         size_bytes: encoded.buffer.length,
         bytes_hex: encoded.buffer.toString("hex"),
+        origin: "operator",
+      },
+    });
+  });
+}
+
+/* RED TEAM: send raw bytes verbatim to the firmware. Bypasses signing.
+ * No safety net here on purpose — that's the point of red-team mode. */
+function handleRawCommand(req: { bytes_hex: string; label?: string }): void {
+  let buf: Buffer;
+  try {
+    buf = Buffer.from(req.bytes_hex, "hex");
+    if (buf.length === 0 || buf.length > 1024) throw new Error("bad length");
+  } catch {
+    console.warn("[atk] rejected malformed bytes_hex");
+    return;
+  }
+
+  /* Try to recover the seq from the primary header for logging; fall back to
+   * a synthetic id so the UI can still correlate sent/ack. */
+  const seq = buf.length >= 4 ? buf.readUInt16BE(2) & 0x3fff : 0xffff;
+  fwSocket.send(buf, FW_TC_PORT, FW_TC_HOST, (err) => {
+    if (err) {
+      console.error(`[atk] send failed: ${err.message}`);
+      return;
+    }
+    const tag = req.label ?? "RAW";
+    console.log(`[atk] sent ${tag} seq=${seq} (${buf.length}B) -> ${FW_TC_HOST}:${FW_TC_PORT}`);
+    broadcast({
+      type: "command_sent",
+      payload: {
+        ts: Date.now(),
+        seq,
+        command: "RAW",
+        size_bytes: buf.length,
+        bytes_hex: buf.toString("hex"),
+        origin: "attack",
+        attack_label: tag,
       },
     });
   });

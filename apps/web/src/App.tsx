@@ -244,9 +244,9 @@ export default function App() {
         <Module
           index={5}
           label="Auth · HMAC"
-          value="DISARMED"
-          state="warn"
-          hint="phase 3 · v2"
+          value="ARMED"
+          state="ok"
+          hint="HMAC-SHA-256 · 128b"
         />
 
         <div className="mt-3 panel px-3 py-2 boot-6">

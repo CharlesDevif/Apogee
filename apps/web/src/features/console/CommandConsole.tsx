@@ -7,9 +7,10 @@ import {
   type KeyboardEvent,
 } from "react";
 import { useMissionStore, type Transmission } from "../../store/mission";
-import { sendCommand } from "../../lib/ws";
+import { sendCommand, sendCommandRaw } from "../../lib/ws";
 import { complete, parse, VOCAB } from "./parser";
 import { PacketInspector } from "./PacketInspector";
+import { ATTACKS, type AttackResult } from "./attacks";
 
 /* PUS-mapped failure codes (mirror of firmware CommandOutcome enum). */
 const FAILURE_LABEL: Record<number, string> = {
@@ -21,6 +22,8 @@ const FAILURE_LABEL: Record<number, string> = {
   7: "UNKNOWN_SVC",
   8: "REJECTED",
   9: "BAD_PAYLOAD",
+  10: "BAD_HMAC",
+  11: "REPLAY",
 };
 
 const REBOOT_ARM_MS = 2000;
@@ -63,7 +66,8 @@ export function CommandConsole() {
   const [filter, setFilter] = useState<Filter>("ALL");
   const [armedDeadline, setArmedDeadline] = useState<number | null>(null);
   const [expandedSeq, setExpandedSeq] = useState<number | null>(null);
-  const [inspectorView, setInspectorView] = useState<"tc" | "ack">("tc");
+  const [inspectorView, setInspectorView] = useState<"tc" | "ack" | "attack">("tc");
+  const [redMode, setRedMode] = useState(false);
   const [, forceTick] = useState(0);
 
   /* Console height — resizable via top handle, persisted across sessions. */
@@ -346,20 +350,48 @@ export function CommandConsole() {
         </div>
       </div>
 
-      <div className="bracket panel h-full flex flex-col">
+      <div
+        className={`bracket panel h-full flex flex-col ${
+          redMode ? "ring-2 ring-alert/70 ring-inset" : ""
+        }`}
+      >
         {/* ────────────────── Target bar ────────────────── */}
-        <div className="flex items-center justify-between border-b border-border bg-rail/40 px-4 py-1.5 shrink-0">
+        <div
+          className={`flex items-center justify-between border-b px-4 py-1.5 shrink-0 ${
+            redMode ? "border-alert/60 bg-alert/10" : "border-border bg-rail/40"
+          }`}
+        >
           <div className="flex items-baseline gap-3">
             <span className="text-[9px] tracking-[0.3em] text-dim uppercase">
               TARGET
             </span>
-            <span className="font-display text-phosphor text-[14px] tracking-[0.18em]">
+            <span
+              className={`font-display text-[14px] tracking-[0.18em] ${
+                redMode ? "alert-glow" : "text-phosphor"
+              }`}
+            >
               {targetId}
             </span>
             <span className="text-[9px] tracking-[0.3em] text-dim uppercase">
-              · COMMANDABLE · CCSDS PUS-C
+              {redMode ? "· RED TEAM · UNAUTHED RAW INJECT" : "· COMMANDABLE · CCSDS PUS-C"}
             </span>
           </div>
+          <div className="flex items-center gap-4">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setRedMode((v) => !v);
+              }}
+              className={`text-[9px] tracking-[0.3em] uppercase border px-2 py-0.5 ${
+                redMode
+                  ? "alert-glow border-alert/60"
+                  : "text-dim border-border hover:text-ink hover:border-seam"
+              }`}
+              aria-pressed={redMode}
+            >
+              {redMode ? "◆ RED TEAM" : "BLUE OPS"}
+            </button>
           <button
             type="button"
             onClick={(e) => {
@@ -373,6 +405,7 @@ export function CommandConsole() {
             <span className="text-deep ml-2">·</span>
             <span className="ml-2">ESC</span>
           </button>
+          </div>
         </div>
 
         {/* ────────────────── State strip ────────────────── */}
@@ -465,9 +498,22 @@ export function CommandConsole() {
         >
           {filteredSeqs.length === 0 ? (
             <div className="px-4 py-3 text-dim italic">
-              {visibleSeqs.length === 0
-                ? "no transmissions yet · type help to list commands"
-                : `no entries match filter ${filter}`}
+              {visibleSeqs.length === 0 ? (
+                redMode ? (
+                  <>
+                    <span className="alert-glow not-italic">RED TEAM ready.</span>{" "}
+                    Send a legitimate command first (type{" "}
+                    <span className="phosphor not-italic">nominal</span> or{" "}
+                    <span className="phosphor not-italic">ping</span>), then click
+                    its log row → <span className="alert-glow not-italic">ATTACK</span>{" "}
+                    tab to inject modified bytes.
+                  </>
+                ) : (
+                  "no transmissions yet · type help to list commands"
+                )
+              ) : (
+                `no entries match filter ${filter}`
+              )}
             </div>
           ) : (
             filteredSeqs.map((seq) => {
@@ -494,6 +540,7 @@ export function CommandConsole() {
                       view={inspectorView}
                       onChangeView={setInspectorView}
                       onClose={() => setExpandedSeq(null)}
+                      redMode={redMode}
                     />
                   ) : null}
                 </div>
@@ -611,19 +658,33 @@ function LogRow({
   onToggle: () => void;
 }) {
   const status = statusOf(t);
-  const barColor =
-    status === "ok"
+  const isAttack = t.origin === "attack";
+  const barColor = isAttack
+    ? "bg-alert"
+    : status === "ok"
       ? "bg-jade/70"
       : status === "fail"
         ? "bg-alert/80"
         : t.command === "REBOOT"
           ? "bg-phosphor/70"
           : "bg-phosphor/40";
-  const arrowColor =
-    status === "ok" ? "jade" : status === "fail" ? "alert-glow" : "phosphor";
-  const cmdColor = t.command === "REBOOT" ? "alert-glow" : "text-ink";
+  const arrowColor = isAttack
+    ? "alert-glow"
+    : status === "ok"
+      ? "jade"
+      : status === "fail"
+        ? "alert-glow"
+        : "phosphor";
+  const cmdColor =
+    isAttack
+      ? "alert-glow"
+      : t.command === "REBOOT"
+        ? "alert-glow"
+        : "text-ink";
   const utcLabel = formatUtc(t.sentAt);
-  const cmdLabel = t.command + (t.arg ? ` ${t.arg}` : "");
+  const cmdLabel = isAttack
+    ? `${t.attackLabel ?? "RAW"}`
+    : t.command + (t.arg ? ` ${t.arg}` : "");
 
   let trailing: React.ReactNode = (
     <span className="text-dim">…awaiting ack</span>
@@ -671,8 +732,8 @@ function LogRow({
         <span className="text-dim">{utcLabel}</span>
         <span className="text-deep">·</span>
         <span className={arrowColor}>▶</span>
-        <span className="text-dim w-[60px] inline-block">
-          TC#{String(t.seq).padStart(3, "0")}
+        <span className={`w-[60px] inline-block ${isAttack ? "alert-glow" : "text-dim"}`}>
+          {isAttack ? "ATK" : `TC#${String(t.seq).padStart(3, "0")}`}
         </span>
         <span className={`${cmdColor} w-[180px] inline-block`}>{cmdLabel}</span>
         <span className="flex-1">{trailing}</span>
@@ -686,22 +747,27 @@ function InspectorPanel({
   view,
   onChangeView,
   onClose,
+  redMode,
 }: {
   t: Transmission;
-  view: "tc" | "ack";
-  onChangeView: (v: "tc" | "ack") => void;
+  view: "tc" | "ack" | "attack";
+  onChangeView: (v: "tc" | "ack" | "attack") => void;
   onClose: () => void;
+  redMode: boolean;
 }) {
   const hasAck = t.ackBytes !== null;
-  const bytes = view === "tc" || !hasAck ? t.tcBytes : (t.ackBytes ?? t.tcBytes);
+  const bytes =
+    view === "ack" && hasAck
+      ? (t.ackBytes ?? t.tcBytes)
+      : t.tcBytes;
   const title =
-    view === "tc"
-      ? `TC#${String(t.seq).padStart(3, "0")} · ${t.command}${t.arg ? ` ${t.arg}` : ""}`
-      : `ACK · TC#${String(t.seq).padStart(3, "0")}`;
+    view === "ack"
+      ? `ACK · TC#${String(t.seq).padStart(3, "0")}`
+      : `TC#${String(t.seq).padStart(3, "0")} · ${t.command}${t.arg ? ` ${t.arg}` : ""}`;
 
   return (
     <div onClick={(e) => e.stopPropagation()}>
-      {/* Tab bar TC / ACK */}
+      {/* Tab bar TC / ACK / ATTACK */}
       <div className="flex items-center gap-2 border-t border-border/60 bg-rail/40 px-4 py-1.5 text-[9px] tracking-[0.3em] uppercase">
         <button
           type="button"
@@ -726,6 +792,17 @@ function InspectorPanel({
         >
           ACK {hasAck ? `· ${t.ackBytes!.length}B` : "· pending"}
         </button>
+        {redMode ? (
+          <button
+            type="button"
+            onClick={() => onChangeView("attack")}
+            className={`px-2 py-0.5 ${
+              view === "attack" ? "alert-glow border-b border-alert" : "text-dim hover:text-ink"
+            }`}
+          >
+            ◆ ATTACK
+          </button>
+        ) : null}
         <span className="flex-1" />
         <button
           type="button"
@@ -736,7 +813,124 @@ function InspectorPanel({
           ✕ CLOSE
         </button>
       </div>
-      <PacketInspector bytes={bytes} title={title} />
+      {view === "attack" ? <AttackPanel t={t} /> : <PacketInspector bytes={bytes} title={title} />}
+    </div>
+  );
+}
+
+/* ─────────────── Attack panel (RED MODE only) ─────────────── */
+
+function AttackPanel({ t }: { t: Transmission }) {
+  const [preview, setPreview] = useState<AttackResult | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
+
+  function fire(result: AttackResult) {
+    const ok = sendCommandRaw(result.bytes, result.label);
+    setFeedback(ok ? `injected ${result.label} · ${result.bytes.length}B` : "send failed");
+    setTimeout(() => setFeedback(null), 2200);
+  }
+
+  return (
+    <div className="border-t border-alert/40 bg-alert/5 px-4 py-3">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-3 text-[10px] tracking-[0.3em] uppercase">
+          <span className="text-alert">[</span>
+          <span className="alert-glow">ATTACK MENU</span>
+          <span className="text-alert">]</span>
+          <span className="text-deep">·</span>
+          <span className="text-dim">RAW INJECT · NO SIGNING</span>
+        </div>
+        <div className="text-[10px] text-dim normal-case tracking-normal italic">
+          target: TC#{String(t.seq).padStart(3, "0")} ({t.command}{t.arg ? ` ${t.arg}` : ""})
+        </div>
+      </div>
+
+      <p className="text-[10px] text-dim normal-case tracking-normal italic mb-3 leading-snug">
+        Pick an attack to preview the modified bytes, then INJECT to send them raw.
+        Each one targets a specific defense — read <span className="text-ink not-italic">expected</span> on each card to know what should happen.
+      </p>
+
+      {/* Attack buttons */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mb-3">
+        {ATTACKS.map((a) => {
+          const result = a.fn(t.tcBytes);
+          const active = preview?.label === result.label;
+          return (
+            <div
+              key={a.id}
+              className={`border ${active ? "border-alert/80 bg-alert/15" : "border-border bg-graphite/40 hover:border-alert/60"}`}
+            >
+              <button
+                type="button"
+                onClick={() => setPreview(result)}
+                className="w-full text-left px-3 py-2"
+              >
+                <div className="flex items-center justify-between">
+                  <span
+                    className={`text-[11px] tracking-[0.25em] uppercase ${active ? "alert-glow" : "text-ink"}`}
+                  >
+                    ◆ {a.label}
+                  </span>
+                  <span className="text-[9px] tracking-[0.25em] text-dim uppercase tnum">
+                    {result.bytes.length}B
+                  </span>
+                </div>
+                <div className="mt-1 text-[10px] text-dim normal-case tracking-normal leading-snug">
+                  {result.description}
+                </div>
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Preview + send */}
+      {preview ? (
+        <div className="border border-alert/40 bg-graphite/60 px-3 py-2">
+          <div className="flex items-baseline justify-between gap-3 mb-1">
+            <span className="alert-glow text-[12px] tracking-[0.25em] uppercase">
+              {preview.label}
+            </span>
+            <span className="text-[10px] text-dim normal-case tracking-normal italic">
+              expected: <span className="text-ink not-italic">{preview.expected}</span>
+            </span>
+          </div>
+          <div className="font-mono text-[11px] tnum text-ink mb-2 break-all leading-[1.5]">
+            {Array.from(preview.bytes)
+              .map((b) => b.toString(16).padStart(2, "0").toUpperCase())
+              .join(" ")}
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] tracking-[0.3em] text-dim uppercase">
+              {feedback ? (
+                <span className="alert-glow normal-case tracking-normal">{feedback}</span>
+              ) : (
+                "ready to inject · no further confirmation"
+              )}
+            </span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setPreview(null)}
+                className="text-[10px] tracking-[0.3em] uppercase text-dim hover:text-ink border border-border px-3 py-1"
+              >
+                CANCEL
+              </button>
+              <button
+                type="button"
+                onClick={() => fire(preview)}
+                className="text-[10px] tracking-[0.3em] uppercase alert-glow border border-alert/70 hover:bg-alert/15 px-3 py-1"
+              >
+                ◆ INJECT
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="text-[10px] text-dim italic px-1">
+          click an attack to preview the modified bytes · INJECT sends them raw to the firmware
+        </div>
+      )}
     </div>
   );
 }

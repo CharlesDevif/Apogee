@@ -3,7 +3,16 @@
  * groups (PH/PUS/payload/CRC) for hex view tinting, and named fields for
  * the readable list. See docs/PROTOCOL.md for the field-level rationale. */
 
-export type FieldGroup = "primary" | "secondary" | "payload" | "crc";
+export type FieldGroup =
+  | "primary"
+  | "secondary"
+  | "payload"
+  | "mac"
+  | "crc";
+
+/** Length of the truncated HMAC-SHA-256 appended to every TC packet.
+ * Must match APOGEE_TC_MAC_LEN in firmware/auth.h. */
+export const APOGEE_TC_MAC_LEN = 16;
 
 export type ByteRange = {
   group: FieldGroup;
@@ -486,7 +495,10 @@ export function decodePacket(bytes: Uint8Array): DecodedPacket {
     }
   }
 
-  const payloadEnd = total - 2;
+  /* TC packets carry a MAC just before the CRC trailer; TM packets don't. */
+  const hasMac = direction === "TC";
+  const macLen = hasMac ? APOGEE_TC_MAC_LEN : 0;
+  const payloadEnd = total - 2 - macLen;
   const payloadLen = Math.max(0, payloadEnd - after);
   if (payloadLen > 0) {
     let payload: { fields: Field[]; summary: string };
@@ -502,6 +514,24 @@ export function decodePacket(bytes: Uint8Array): DecodedPacket {
     fields.push(...payload.fields);
     ranges.push({ group: "payload", start: after, length: payloadLen });
     summary = payload.summary;
+  }
+
+  /* MAC field (TC only). */
+  if (hasMac && total >= 2 + macLen) {
+    const macStart = total - 2 - macLen;
+    const macBytes = bytes.subarray(macStart, macStart + macLen);
+    const macHex = Array.from(macBytes)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    fields.push({
+      group: "mac",
+      name: "HMAC-SHA-256",
+      byteStart: macStart,
+      byteLength: macLen,
+      value: macHex,
+      hint: "truncated to 128 bits · authenticates origin (sol → firmware)",
+    });
+    ranges.push({ group: "mac", start: macStart, length: macLen });
   }
 
   /* CRC trailer */
@@ -530,20 +560,3 @@ export function decodePacket(bytes: Uint8Array): DecodedPacket {
   };
 }
 
-export function groupColor(group: FieldGroup): string {
-  switch (group) {
-    case "primary":   return "phosphor";
-    case "secondary": return "jade";
-    case "payload":   return "ink";
-    case "crc":       return "alert-glow";
-  }
-}
-
-export function groupLabel(group: FieldGroup): string {
-  switch (group) {
-    case "primary":   return "PRIMARY HEADER";
-    case "secondary": return "PUS SECONDARY";
-    case "payload":   return "USER DATA";
-    case "crc":       return "CRC TRAILER";
-  }
-}

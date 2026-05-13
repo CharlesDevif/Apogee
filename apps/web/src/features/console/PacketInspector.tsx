@@ -12,6 +12,7 @@ const GROUP_BG: Record<FieldGroup, string> = {
   primary: "bg-phosphor/15 border-phosphor/40",
   secondary: "bg-jade/15 border-jade/40",
   payload: "bg-ink/10 border-ink/30",
+  mac: "bg-phosphor/35 border-phosphor",
   crc: "bg-alert/15 border-alert/40",
 };
 
@@ -19,6 +20,7 @@ const GROUP_BAR: Record<FieldGroup, string> = {
   primary: "bg-phosphor",
   secondary: "bg-jade",
   payload: "bg-ink/60",
+  mac: "bg-phosphor/80",
   crc: "bg-alert",
 };
 
@@ -26,6 +28,7 @@ const GROUP_LABEL: Record<FieldGroup, string> = {
   primary: "HEADER",
   secondary: "PUS",
   payload: "PAYLOAD",
+  mac: "HMAC",
   crc: "CRC",
 };
 

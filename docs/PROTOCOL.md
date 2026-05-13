@@ -257,7 +257,7 @@ CCSDS impose **big-endian (network order)**. Notre format actuel est little-endi
 
 Le `_Static_assert(sizeof == N)` reste indispensable côté firmware pour figer la taille de chaque report.
 
-## 9. Sécurité (préfiguration Phase 3)
+## 9. Sécurité — Phase 3.1 implémentée
 
 CCSDS **n'inclut pas de chiffrement ni d'authentification natifs**. C'est délégué à des extensions optionnelles :
 
@@ -266,6 +266,41 @@ CCSDS **n'inclut pas de chiffrement ni d'authentification natifs**. C'est délé
 - **HMAC custom** appliqué au paquet PUS, ce qui est notre choix pour Apogée Phase 3
 
 Le fait que CCSDS soit **clair par défaut** est exactement ce qui rend les démos d'attaque pertinentes en conférence sécu (replay, tampering, MITM). Voir l'article [« Fuzzing Space Communication Protocols »](https://www.ndss-symposium.org/wp-content/uploads/spacesec25-final12.pdf) (NDSS SpaceSec 2025).
+
+### 9.1 Layout TC authentifié (Phase 3.1)
+
+Depuis la phase 3.1, **toute télécommande** porte un HMAC-SHA-256 tronqué à 128 bits, inséré entre le payload et le CRC :
+
+```
+[ Primary Header 6B ][ PUS-TC 4B ][ Payload N ][ HMAC 16B ][ CRC 2B ]
+                                              ↑           ↑
+                          MAC couvre [0..MAC_start)        CRC couvre [0..CRC_start)
+```
+
+- **Clé** : pré-partagée (PSK) 32 octets aléatoires, codée hex dans `apps/firmware/src/auth.h` (`APOGEE_PSK_HEX`) et dans `apps/server/.env` (`APOGEE_HMAC_KEY`). Les deux doivent **strictement matcher**.
+- **MAC** : `HMAC-SHA-256(PSK, PH || PUS || Payload)`, tronqué aux 16 premiers octets.
+- **CRC-16-CCITT** appliqué après, sur tout (PH + PUS + Payload + MAC). Bit-flip en cours de route → bad CRC. MAC modifié → bad HMAC.
+- **Comparaison constant-time** côté firmware (`auth_mac_equal`) — résistant aux timing attacks naïves.
+
+### 9.2 Anti-replay
+
+Le firmware mémorise le dernier seq accepté en RAM volatile. Toute TC avec `seq_count ≤ last_accepted` est rejetée avec `CMD_OUTCOME_REPLAY` (failure code 11) **avant dispatch**, mais **après** vérification du MAC (sinon un attaquant pourrait verrouiller le compteur en envoyant des seqs élevés non authentifiés).
+
+Limitation MVP : `REBOOT` réinitialise le compteur en RAM (pas de NVRAM). Un attaquant capable de provoquer un reboot pourrait rejouer une TC pré-reboot. Mitigation Phase 4 : compteur persistant, ou inclusion d'un timestamp/nonce dans le MAC.
+
+### 9.3 Codes d'échec sécurité
+
+| Code | Nom | Sens |
+|---|---|---|
+| 10 | `BAD_HMAC` | MAC ne matche pas — clé fausse, paquet altéré, ou attaque |
+| 11 | `REPLAY` | Seq déjà accepté — détection de replay |
+
+### 9.4 Hors scope sécurité (Phase 3.1)
+
+- **MAC sur TM** (les acks/HK ne sont pas signés — spoofing TM possible, traitement Phase 3.2)
+- **Chiffrement** (le payload TC reste lisible — confidentialité absente, c'est uniquement de l'authentification)
+- **Rotation de clé** (PSK fixe — Phase 4)
+- **Persistance du compteur anti-replay** (volatile, voir 9.2)
 
 ## 10. Pour aller plus loin
 

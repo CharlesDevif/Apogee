@@ -44,13 +44,16 @@ export function connect() {
       }
     } else if (msg.type === "command_sent") {
       const p = msg.payload;
+      const isAttack = p.origin === "attack";
       useMissionStore.getState().pushTransmissionSent({
         seq: p.seq,
         command: p.command,
-        arg: pendingArgs.shift() ?? null,
+        arg: isAttack ? null : pendingArgs.shift() ?? null,
         sentAt: p.ts,
         sizeBytes: p.size_bytes,
         tcBytes: hexToBytes(p.bytes_hex),
+        origin: p.origin,
+        attackLabel: p.attack_label ?? null,
       });
     } else if (msg.type === "command_ack") {
       const p = msg.payload;
@@ -84,6 +87,18 @@ export function sendCommand(req: CommandRequest): boolean {
    * insertion order via a small in-flight queue. */
   pendingArgs.push(req.command === "SET_MODE" ? req.mode : null);
   ws.send(JSON.stringify({ type: "command", payload: req }));
+  return true;
+}
+
+/* Red-team only: ship raw bytes verbatim, no signing, no validation. */
+export function sendCommandRaw(bytes: Uint8Array, label: string): boolean {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+  const hex = Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  ws.send(
+    JSON.stringify({ type: "command_raw", payload: { bytes_hex: hex, label } }),
+  );
   return true;
 }
 
